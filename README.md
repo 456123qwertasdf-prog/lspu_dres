@@ -2,6 +2,38 @@
 
 A modern, AI-powered emergency reporting and response management system built with Supabase, featuring real-time notifications, geolocation tracking, and intelligent image analysis.
 
+## ⚡ Quick Start
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/yourusername/lspu-dres.git
+   cd lspu-dres
+   ```
+
+2. **Install dependencies**
+   ```bash
+   npm install
+   ```
+
+3. **Configure environment**
+   ```bash
+   cp env.template .env
+   # Edit .env with your API keys (see SETUP_GUIDE.md)
+   ```
+
+4. **Set up database**
+   ```bash
+   node setup.js
+   ```
+
+5. **Start the application**
+   ```bash
+   # Open public/index.html in your browser
+   # Or use a local server: python -m http.server 8000
+   ```
+
+📖 **For detailed setup instructions, see [SETUP_GUIDE.md](SETUP_GUIDE.md)**
+
 ## 🚀 Features
 
 ### For Citizens (User Dashboard)

@@ -7,8 +7,9 @@
 
 class AzureVisionAPI {
   constructor() {
-    this.apiKey = "78QAAixU2XIzJ1pDwQJinMmlpDiUdyvlVCleigbk2x9FIy0wBgbpJQQJ99BJACqBBLyXJ3w3AAAFACOGKWmv";
-    this.endpoint = "https://ew09.cognitiveservices.azure.com";
+    // Use environment variables for security
+    this.apiKey = process.env.AZURE_VISION_API_KEY || "YOUR_AZURE_VISION_API_KEY";
+    this.endpoint = process.env.AZURE_VISION_ENDPOINT || "YOUR_AZURE_VISION_ENDPOINT";
   }
 
   /**
