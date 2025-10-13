@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LSPU Emergency Response - Login</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/x-icon" href="images/favicon.ico">
+</head>
+<body class="bg-gray-50 min-h-screen flex items-center justify-center">
+    <!-- Login Container -->
+    <div class="max-w-md w-full mx-4">
+        <!-- Logo and Title -->
+        <div class="text-center mb-8">
+            <div class="text-6xl mb-4">🚨</div>
+            <h1 class="text-3xl font-bold text-gray-900 mb-2">LSPU Emergency Response</h1>
+            <p class="text-gray-600">AI-Powered Emergency Management System</p>
+        </div>
+
+        <!-- Login Form -->
+        <div class="card">
+            <div class="card-header">
+                <h2 class="card-title text-center">Sign In</h2>
+                <p class="card-subtitle text-center">Enter your credentials to access the system</p>
+            </div>
+
+            <form id="loginForm" class="space-y-6">
+                <!-- Email Field -->
+                <div class="form-group">
+                    <label class="form-label">Email Address</label>
+                    <input type="email" id="email" class="form-input" placeholder="Enter your email" required>
+                </div>
+                
+                <!-- Password Field -->
+                <div class="form-group">
+                    <label class="form-label">Password</label>
+                    <input type="password" id="password" class="form-input" placeholder="Enter your password" required>
+                </div>
+
+                <!-- Submit Button -->
+                <div class="text-center">
+                    <button type="submit" class="btn btn-primary btn-lg w-full">
+                        <span id="submitText">🚀 Sign In</span>
+                        <span id="submitLoading" class="hidden">
+                            <div class="loading"></div>
+                            Signing in...
+                        </span>
+                    </button>
+                </div>
+            </form>
+
+            <!-- Sign Up Link -->
+            <div class="text-center mt-6">
+                <p class="text-sm text-gray-600">
+                    Don't have an account? 
+                    <button onclick="showSignUp()" class="text-red-600 hover:text-red-800 font-medium">Sign up here</button>
+                </p>
+            </div>
+        </div>
+
+        <!-- System Info -->
+        <div class="text-center mt-8">
+            <div class="grid grid-cols-1 gap-4 text-sm text-gray-600">
+                <div>
+                    <div class="font-semibold">📱 Mobile Ready</div>
+                    <div>Works on all devices</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sign Up Modal -->
+    <div id="signUpModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="card" style="max-width: 500px; width: 90%;">
+            <div class="card-header">
+                <h3 class="card-title">Create Account</h3>
+                <button onclick="hideSignUp()" class="absolute top-4 right-4 text-gray-500 hover:text-gray-700">×</button>
+            </div>
+            
+            <form id="signUpForm" class="space-y-4">
+                <div class="form-group">
+                    <label class="form-label">Full Name</label>
+                    <input type="text" id="signupName" class="form-input" placeholder="Enter your full name" required>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Email Address</label>
+                    <input type="email" id="signupEmail" class="form-input" placeholder="Enter your email" required>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Password</label>
+                    <input type="password" id="signupPassword" class="form-input" placeholder="Create a password" required>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Confirm Password</label>
+                    <input type="password" id="signupConfirmPassword" class="form-input" placeholder="Confirm your password" required>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Role</label>
+                    <select id="signupRole" class="form-input form-select">
+                        <option value="citizen">Citizen - Report Emergencies</option>
+                        <option value="responder">Responder - Emergency Response</option>
+                        <option value="admin">Admin - System Management</option>
+                    </select>
+                </div>
+                
+                <div class="flex gap-4">
+                    <button type="button" onclick="hideSignUp()" class="btn btn-outline flex-1">Cancel</button>
+                    <button type="submit" class="btn btn-primary flex-1">Create Account</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Alerts Container -->
+    <div class="alerts-container fixed top-4 right-4 z-50"></div>
+
+    <!-- Scripts -->
+    <script src="js/supabase.js"></script>
+    <script>
+        // Initialize login system
+        document.addEventListener('DOMContentLoaded', async () => {
+            // Wait for system initialization
+            await new Promise(resolve => {
+                const checkInit = () => {
+                    if (emergencySystem.isInitialized) {
+                        resolve();
+                    } else {
+                        setTimeout(checkInit, 100);
+                    }
+                };
+                checkInit();
+            });
+
+            // Set up form handlers
+            document.getElementById('loginForm').addEventListener('submit', handleLogin);
+            document.getElementById('signUpForm').addEventListener('submit', handleSignUp);
+        });
+
+        // Handle login
+        async function handleLogin(e) {
+            e.preventDefault();
+            
+            const submitBtn = document.querySelector('button[type="submit"]');
+            const submitText = document.getElementById('submitText');
+            const submitLoading = document.getElementById('submitLoading');
+            
+            try {
+                // Show loading state
+                submitBtn.disabled = true;
+                submitText.classList.add('hidden');
+                submitLoading.classList.remove('hidden');
+
+                const email = document.getElementById('email').value;
+                const password = document.getElementById('password').value;
+
+                // Sign in with Supabase
+                await emergencySystem.signIn(email, password);
+                
+                // Get user role from metadata
+                const userRole = emergencySystem.user?.user_metadata?.role || 'citizen';
+                
+                // Redirect based on actual user role
+                redirectToDashboard(userRole);
+                
+            } catch (error) {
+                console.error('Login failed:', error);
+                emergencySystem.showError('Login failed: ' + error.message);
+            } finally {
+                // Hide loading state
+                submitBtn.disabled = false;
+                submitText.classList.remove('hidden');
+                submitLoading.classList.add('hidden');
+            }
+        }
+
+        // Handle sign up
+        async function handleSignUp(e) {
+            e.preventDefault();
+            
+            try {
+                const name = document.getElementById('signupName').value;
+                const email = document.getElementById('signupEmail').value;
+                const password = document.getElementById('signupPassword').value;
+                const confirmPassword = document.getElementById('signupConfirmPassword').value;
+                const role = document.getElementById('signupRole').value;
+
+                if (password !== confirmPassword) {
+                    emergencySystem.showError('Passwords do not match');
+                    return;
+                }
+
+                // Sign up with Supabase
+                await emergencySystem.signUp(email, password, {
+                    full_name: name,
+                    role: role
+                });
+                
+                hideSignUp();
+                emergencySystem.showSuccess('Account created! Please check your email to verify your account.');
+                
+            } catch (error) {
+                console.error('Sign up failed:', error);
+                emergencySystem.showError('Sign up failed: ' + error.message);
+            }
+        }
+
+        // Redirect to appropriate dashboard based on user role
+        function redirectToDashboard(role) {
+            switch (role) {
+                case 'citizen':
+                    window.location.href = 'user.html';
+                    break;
+                case 'responder':
+                    window.location.href = 'responder.html';
+                    break;
+                case 'admin':
+                    window.location.href = 'admin.html';
+                    break;
+                default:
+                    window.location.href = 'user.html';
+            }
+        }
+
+        // Show sign up modal
+        function showSignUp() {
+            document.getElementById('signUpModal').classList.remove('hidden');
+        }
+
+        // Hide sign up modal
+        function hideSignUp() {
+            document.getElementById('signUpModal').classList.add('hidden');
+        }
+    </script>
+</body>
+</html>
