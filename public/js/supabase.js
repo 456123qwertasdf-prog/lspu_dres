@@ -8,7 +8,7 @@ class EmergencyResponseSystem {
     this.isInitialized = false;
     this.location = null;
     this.watchId = null;
-    this.opencageApiKey = window.OPENCAGE_API_KEY || 'YOUR_OPENCAGE_API_KEY'; // OpenCage API key for geocoding
+    this.opencageApiKey = 'a8fcf18afc4f4fb8a7aa16d8403ae0a2'; // OpenCage API key for geocoding
   }
 
   async initialize() {
