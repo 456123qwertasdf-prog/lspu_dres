@@ -25,8 +25,7 @@ ADD COLUMN IF NOT EXISTS message_optional BOOLEAN DEFAULT true,
 ADD COLUMN IF NOT EXISTS auto_location BOOLEAN DEFAULT true;
 
 -- Update reports table constraints
-ALTER TABLE reports 
-ALTER COLUMN description DROP NOT NULL; -- Make description optional
+-- Note: description column doesn't exist, skipping this constraint change
 
 -- Add index for better performance
 CREATE INDEX IF NOT EXISTS idx_reports_user_role ON reports(user_role);
@@ -40,19 +39,19 @@ DROP POLICY IF EXISTS "Users can update own reports" ON reports;
 -- Citizen policies
 CREATE POLICY "Citizens can view own reports" ON reports
     FOR SELECT USING (
-        auth.uid() = user_id AND 
+        auth.uid()::text = reporter_uid AND 
         user_role = 'citizen'
     );
 
 CREATE POLICY "Citizens can insert own reports" ON reports
     FOR INSERT WITH CHECK (
-        auth.uid() = user_id AND 
+        auth.uid()::text = reporter_uid AND 
         user_role = 'citizen'
     );
 
 CREATE POLICY "Citizens can update own reports" ON reports
     FOR UPDATE USING (
-        auth.uid() = user_id AND 
+        auth.uid()::text = reporter_uid AND 
         user_role = 'citizen'
     );
 
@@ -157,14 +156,14 @@ BEGIN
     user_role := get_user_role(user_id);
     
     -- Get report owner
-    SELECT reports.user_id INTO report_owner
+    SELECT reports.reporter_uid INTO report_owner
     FROM reports
     WHERE reports.id = report_id;
     
     -- Check access based on role
     IF user_role = 'admin' OR user_role = 'responder' THEN
         RETURN TRUE;
-    ELSIF user_role = 'citizen' AND report_owner = user_id THEN
+    ELSIF user_role = 'citizen' AND report_owner = user_id::text THEN
         RETURN TRUE;
     ELSE
         RETURN FALSE;
@@ -192,7 +191,7 @@ COMMENT ON COLUMN reports.auto_location IS 'Whether location was auto-detected';
 CREATE OR REPLACE VIEW user_reports AS
 SELECT 
     r.*,
-    get_user_role(r.user_id) as reporter_role,
+    get_user_role(r.reporter_uid::uuid) as reporter_role,
     can_access_report(r.id, auth.uid()) as can_access
 FROM reports r;
 

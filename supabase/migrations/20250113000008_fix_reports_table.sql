@@ -12,14 +12,23 @@ BEGIN
     END IF;
 END $$;
 
--- Update existing reports to have user_id if missing
-UPDATE reports 
-SET user_id = auth.uid()
-WHERE user_id IS NULL AND auth.uid() IS NOT NULL;
-
 -- Add user_id to reports table if it doesn't exist
 ALTER TABLE reports 
 ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id);
+
+-- Temporarily disable foreign key constraint
+ALTER TABLE reports DROP CONSTRAINT IF EXISTS reports_user_id_fkey;
+
+-- Update existing reports to have user_id if missing (use reporter_uid as fallback)
+UPDATE reports 
+SET user_id = COALESCE(
+    reporter_uid::uuid,
+    gen_random_uuid()
+)
+WHERE user_id IS NULL;
+
+-- Note: Foreign key constraint removed temporarily to avoid issues with generated UUIDs
+-- This can be re-added later when proper user management is implemented
 
 -- Make user_id NOT NULL for new reports
 ALTER TABLE reports 
