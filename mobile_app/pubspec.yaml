@@ -115,6 +115,6 @@ flutter:
 flutter_launcher_icons:
   android: true
   ios: false
-  image_path: "assets/images/app_icon.png"
-  adaptive_icon_background: "#dc2626"
+  image_path: "assets/images/udrrmo-logo.jpg"
+  adaptive_icon_background: "#FFFFFF"
   adaptive_icon_foreground: "assets/images/udrrmo-logo.jpg"
