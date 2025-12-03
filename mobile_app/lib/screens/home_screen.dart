@@ -7,8 +7,11 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/supabase_service.dart';
 import '../services/emergency_sound_service.dart';
+import '../services/tutorial_service.dart';
+import '../models/tutorial_model.dart';
 import 'learning_modules_screen.dart';
 import 'notifications_screen.dart';
+import 'tutorial_screen.dart';
 
 
 class HomeScreen extends StatefulWidget {
@@ -2096,6 +2099,59 @@ class _HomeScreenState extends State<HomeScreen> {
               title: 'Map & Location',
               onTap: () {
                 Navigator.pushNamed(context, '/map');
+              },
+            ),
+            _buildMenuItem(
+              icon: Icons.help_outline,
+              title: 'View Tutorials',
+              color: const Color(0xFF8b5cf6),
+              onTap: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => TutorialScreen(
+                      tutorial: AppTutorials.mainTutorial,
+                    ),
+                  ),
+                );
+              },
+            ),
+            _buildMenuItem(
+              icon: Icons.restart_alt,
+              title: 'Reset All Tutorials',
+              color: const Color(0xFFf59e0b),
+              onTap: () async {
+                final confirmed = await showDialog<bool>(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text('Reset Tutorials?'),
+                    content: const Text(
+                      'This will show all tutorials again as if you\'re using the app for the first time.',
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, false),
+                        child: const Text('Cancel'),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        child: const Text('Reset'),
+                      ),
+                    ],
+                  ),
+                );
+                
+                if (confirmed == true) {
+                  await TutorialService.resetTutorial();
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Tutorials reset successfully!'),
+                        backgroundColor: Color(0xFF10b981),
+                      ),
+                    );
+                  }
+                }
               },
             ),
             const SizedBox(height: 16),

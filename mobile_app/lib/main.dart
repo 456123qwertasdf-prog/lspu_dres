@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'services/supabase_service.dart';
 import 'services/onesignal_service.dart';
+import 'services/tutorial_service.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/emergency_report_screen.dart';
@@ -15,6 +16,12 @@ import 'screens/super_user_reports_screen.dart';
 import 'screens/super_user_announcements_screen.dart';
 import 'screens/super_user_map_screen.dart';
 import 'screens/super_user_early_warning_screen.dart';
+import 'screens/report_detail_edit_screen.dart';
+import 'screens/tutorial_screen.dart';
+import 'models/tutorial_model.dart';
+
+// Global navigator key for navigation from anywhere
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -25,7 +32,97 @@ void main() async {
   // Initialize OneSignal for push notifications
   await OneSignalService().initialize();
   
+  // Set up notification tap handlers
+  _setupNotificationHandlers();
+  
   runApp(const MyApp());
+}
+
+/// Set up handlers for notification taps
+void _setupNotificationHandlers() {
+  final oneSignal = OneSignalService();
+  
+  // 1. Handle assignment notification taps (RESPONDER)
+  oneSignal.setOnAssignmentNotificationTap((reportId, assignmentId) async {
+    print('📱 [RESPONDER] Opening assignment - Report ID: $reportId');
+    
+    try {
+      // Fetch the full report data
+      final response = await SupabaseService.client
+          .from('reports')
+          .select('*')
+          .eq('id', reportId)
+          .single();
+      
+      if (response != null) {
+        // Navigate to report details screen
+        navigatorKey.currentState?.push(
+          MaterialPageRoute(
+            builder: (context) => ReportDetailEditScreen(report: response),
+          ),
+        );
+      }
+    } catch (e) {
+      print('❌ Error loading report for assignment notification: $e');
+    }
+  });
+  
+  // 2. Handle critical report notification taps (SUPER USER)
+  oneSignal.setOnCriticalReportNotificationTap((reportId) async {
+    print('📱 [SUPER USER] Opening critical report - Report ID: $reportId');
+    
+    try {
+      // Fetch the full report data
+      final response = await SupabaseService.client
+          .from('reports')
+          .select('*')
+          .eq('id', reportId)
+          .single();
+      
+      if (response != null) {
+        // Navigate to report details screen
+        navigatorKey.currentState?.push(
+          MaterialPageRoute(
+            builder: (context) => ReportDetailEditScreen(report: response),
+          ),
+        );
+      }
+    } catch (e) {
+      print('❌ Error loading critical report: $e');
+    }
+  });
+  
+  // 3. Handle report update notification taps (CITIZEN - their own reports)
+  oneSignal.setOnReportUpdateNotificationTap((reportId) async {
+    print('📱 [CITIZEN] Opening report update - Report ID: $reportId');
+    
+    try {
+      // Fetch the full report data
+      final response = await SupabaseService.client
+          .from('reports')
+          .select('*')
+          .eq('id', reportId)
+          .single();
+      
+      if (response != null) {
+        // Navigate to report details screen
+        navigatorKey.currentState?.push(
+          MaterialPageRoute(
+            builder: (context) => ReportDetailEditScreen(report: response),
+          ),
+        );
+      }
+    } catch (e) {
+      print('❌ Error loading report update: $e');
+    }
+  });
+  
+  // 4. Handle emergency announcement taps (ALL USERS)
+  oneSignal.setOnEmergencyNotificationTap((announcementId) {
+    print('📱 [ALL USERS] Opening emergency announcement: $announcementId');
+    // Navigate to map to see emergency location
+    navigatorKey.currentState?.pushNamed('/map');
+  });
 }
 
 class MyApp extends StatelessWidget {
@@ -34,6 +131,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey, // Add global navigator key
       title: 'LSPU DRES',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
@@ -112,11 +210,25 @@ class RoleRouter extends StatefulWidget {
 class _RoleRouterState extends State<RoleRouter> {
   bool _isLoading = true;
   String? _role;
+  bool _shouldShowTutorial = false;
 
   @override
   void initState() {
     super.initState();
-    _determineRole();
+    _initialize();
+  }
+
+  Future<void> _initialize() async {
+    await _determineRole();
+    await _checkTutorial();
+  }
+
+  Future<void> _checkTutorial() async {
+    final tutorialCompleted = await TutorialService.isTutorialCompleted();
+    setState(() {
+      _shouldShowTutorial = !tutorialCompleted;
+      _isLoading = false;
+    });
   }
 
   Future<void> _determineRole() async {
@@ -125,7 +237,6 @@ class _RoleRouterState extends State<RoleRouter> {
       if (userId == null) {
         setState(() {
           _role = null;
-          _isLoading = false;
         });
         return;
       }
@@ -167,12 +278,6 @@ class _RoleRouterState extends State<RoleRouter> {
     } catch (_) {
       if (!mounted) return;
       _role = null;
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
     }
   }
 
@@ -183,6 +288,19 @@ class _RoleRouterState extends State<RoleRouter> {
         body: Center(
           child: CircularProgressIndicator(),
         ),
+      );
+    }
+
+    // Show tutorial if needed (first time login)
+    if (_shouldShowTutorial) {
+      return TutorialScreen(
+        tutorial: AppTutorials.mainTutorial,
+        canSkip: true,
+        onComplete: () {
+          setState(() {
+            _shouldShowTutorial = false;
+          });
+        },
       );
     }
 
