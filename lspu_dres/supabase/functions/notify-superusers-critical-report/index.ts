@@ -80,75 +80,54 @@ serve(async (req) => {
       )
     }
 
-    // Get all super users
+    // Get all super users with their OneSignal player IDs
     const { data: superUsers, error: superUsersError } = await supabaseClient
       .rpc('get_super_users')
 
     if (superUsersError) {
-      console.warn('Failed to fetch super users, trying alternative method:', superUsersError)
-      
-      // Fallback: Query auth.users directly for super users
-      const { data: authUsers, error: authError } = await supabaseClient
-        .from('users')
-        .select('id, email, onesignal_player_id, raw_user_meta_data')
-        .filter('raw_user_meta_data->>role', 'in', '("super_user","admin")')
-
-      if (authError || !authUsers || authUsers.length === 0) {
-        console.warn('No super users found')
-        return new Response(
-          JSON.stringify({ 
-            success: true, 
-            sent: 0,
-            message: 'No super users found' 
-          }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
-        )
-      }
+      console.warn('Failed to fetch super users:', superUsersError)
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          sent: 0,
+          message: 'Failed to fetch super users' 
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
+      )
     }
 
-    // Get OneSignal player IDs for all super users/admins
-    const { data: adminUsers, error: adminError } = await supabaseClient
-      .from('users')
-      .select('id, email, onesignal_player_id')
-      .not('onesignal_player_id', 'is', null)
+    if (!superUsers || superUsers.length === 0) {
+      console.warn('No super users found in database')
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          sent: 0,
+          message: 'No super users found' 
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
+      )
+    }
 
-    if (adminError || !adminUsers || adminUsers.length === 0) {
+    console.log(`Found ${superUsers.length} super user records`)
+
+    // Filter to only users with OneSignal player IDs
+    const targetUsers = superUsers.filter(user => 
+      user.onesignal_player_id !== null && user.onesignal_player_id !== ''
+    )
+
+    if (targetUsers.length === 0) {
       console.warn('No super users with OneSignal player IDs found')
       return new Response(
         JSON.stringify({ 
           success: true, 
           sent: 0,
-          message: 'No super users with OneSignal player IDs found' 
+          message: 'No super users with push notifications enabled' 
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
       )
     }
 
-    // Filter to only get super users and admins by checking their role
-    const { data: superUserIds, error: roleError } = await supabaseClient.rpc(
-      'get_users_by_role',
-      { role_names: ['super_user', 'admin'] }
-    )
-
-    let targetUsers = adminUsers
-    if (!roleError && superUserIds && superUserIds.length > 0) {
-      // Filter adminUsers to only include those in superUserIds
-      targetUsers = adminUsers.filter(user => 
-        superUserIds.some((su: any) => su.id === user.id)
-      )
-    }
-
-    if (targetUsers.length === 0) {
-      console.warn('No super users/admins with OneSignal player IDs found')
-      return new Response(
-        JSON.stringify({ 
-          success: true, 
-          sent: 0,
-          message: 'No super users/admins with push notification enabled' 
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
-      )
-    }
+    console.log(`Found ${targetUsers.length} super users with OneSignal player IDs`)
 
     // Get player IDs
     const playerIds = targetUsers
