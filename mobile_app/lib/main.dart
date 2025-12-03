@@ -283,13 +283,16 @@ class _RoleRouterState extends State<RoleRouter> {
 
     // Route super_user to super user dashboard
     if (_role == 'super_user') {
+      print('🎯 RoleRouter: Loading SuperUserDashboardScreen for role: $_role');
       return const SuperUserDashboardScreen();
     }
 
     if (_role == 'responder' || _role == 'admin') {
+      print('🎯 RoleRouter: Loading ResponderDashboardScreen for role: $_role');
       return const ResponderDashboardScreen();
     }
 
+    print('🎯 RoleRouter: Loading HomeScreen for role: $_role');
     return const HomeScreen();
   }
 }

@@ -52,9 +52,9 @@ if (Test-Path $sourcePath) {
     Write-Host "2. Go to the login page" -ForegroundColor White
     Write-Host "3. Look for the green 'Download Android App' button" -ForegroundColor White
     Write-Host "4. Share the link with your users!" -ForegroundColor White
-} else {
+}
+else {
     Write-Host "❌ Error: APK file not found at $sourcePath" -ForegroundColor Red
     Write-Host "Make sure the build completed successfully" -ForegroundColor Yellow
     exit 1
 }
-

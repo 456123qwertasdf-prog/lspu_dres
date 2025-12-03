@@ -46,7 +46,10 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    print('🏠 HomeScreen initState called');
+    print('🌤️ Calling _loadWeatherData...');
     _loadWeatherData();
+    print('👤 Calling _loadUserProfile...');
     _loadUserProfile();
     _loadActiveEmergencyAlert();
     _subscribeToEmergencyAlerts();
@@ -73,14 +76,18 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadWeatherData() async {
+    print('🌤️ Starting weather data load...');
     setState(() {
       _isLoadingWeather = true;
       _weatherStatus = 'Loading...';
     });
 
     try {
+      final url = '$_supabaseUrl/functions/v1/enhanced-weather-alert';
+      print('🌤️ Weather API URL: $url');
+      
       final response = await http.post(
-        Uri.parse('$_supabaseUrl/functions/v1/enhanced-weather-alert'),
+        Uri.parse(url),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $_supabaseKey',
@@ -92,18 +99,25 @@ class _HomeScreenState extends State<HomeScreen> {
         }),
       );
 
+      print('🌤️ Weather API Response Status: ${response.statusCode}');
+      print('🌤️ Weather API Response Body: ${response.body}');
+
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
+        print('🌤️ Weather data parsed successfully');
         setState(() {
           _weatherData = data['weather_data'] ?? data;
           _weatherStatus = 'Live';
           _isLoadingWeather = false;
           _lastUpdated = DateTime.now();
         });
+        print('✅ Weather data loaded: Temperature ${_weatherData?['main']?['temp']}°C');
       } else {
-        throw Exception('Failed to load weather data');
+        print('❌ Weather API returned status ${response.statusCode}');
+        throw Exception('Failed to load weather data: ${response.statusCode}');
       }
     } catch (e) {
+      print('❌ Weather loading error: $e');
       setState(() {
         _weatherStatus = 'Error';
         _isLoadingWeather = false;

@@ -41,8 +41,8 @@ class _SuperUserEarlyWarningScreenState
           'Authorization': 'Bearer $_supabaseKey',
         },
         body: jsonEncode({
-          'latitude': 14.26284,
-          'longitude': 121.39743,
+          'latitude': 14.262585,
+          'longitude': 121.398436,
           'city': 'LSPU Sta. Cruz Campus, Laguna, Philippines',
         }),
       );

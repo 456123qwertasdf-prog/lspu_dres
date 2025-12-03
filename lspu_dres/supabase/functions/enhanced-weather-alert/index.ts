@@ -104,8 +104,8 @@ Deno.serve(async (req) => {
     }
 
     // Use new LSPU coordinates if not provided
-  const finalLatitude = latitude || 14.26284;
-  const finalLongitude = longitude || 121.39743;
+  const finalLatitude = latitude || 14.262585;
+  const finalLongitude = longitude || 121.398436;
     const finalCity = city || "LSPU Sta. Cruz Campus, Laguna, Philippines";
 
     console.log(`🌤️ Fetching weather data for: ${finalCity} (${finalLatitude}, ${finalLongitude})`);
