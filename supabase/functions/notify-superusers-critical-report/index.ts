@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
+import { encode as base64Encode } from "https://deno.land/std@0.168.0/encoding/base64.ts"
 
 const ONESIGNAL_REST_API_KEY = Deno.env.get('ONESIGNAL_REST_API_KEY')
 const ONESIGNAL_APP_ID = Deno.env.get('ONESIGNAL_APP_ID')
@@ -266,9 +267,9 @@ async function sendOneSignalNotification(
     const isV2Key = ONESIGNAL_REST_API_KEY!.startsWith('os_v2_app_')
     const authHeader = isV2Key 
       ? `Key ${ONESIGNAL_REST_API_KEY}`
-      : `Basic ${btoa(ONESIGNAL_REST_API_KEY + ':')}`
+      : `Basic ${base64Encode(new TextEncoder().encode(`${ONESIGNAL_REST_API_KEY}:`))}`
 
-    const response = await fetch('https://api.onesignal.com/notifications', {
+    const response = await fetch('https://onesignal.com/api/v1/notifications', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
