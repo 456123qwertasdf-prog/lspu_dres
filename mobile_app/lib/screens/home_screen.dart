@@ -5,9 +5,11 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:showcaseview/showcaseview.dart';
 import '../services/supabase_service.dart';
 import '../services/emergency_sound_service.dart';
 import '../services/tutorial_service.dart';
+import '../services/interactive_tutorial_service.dart';
 import '../models/tutorial_model.dart';
 import 'learning_modules_screen.dart';
 import 'notifications_screen.dart';
@@ -40,6 +42,14 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isAlertDialogVisible = false;
   final EmergencySoundService _soundService = EmergencySoundService();
   
+  // Interactive Tutorial Keys
+  final GlobalKey _emergencyButtonKey = GlobalKey();
+  final GlobalKey _myReportsKey = GlobalKey();
+  final GlobalKey _weatherKey = GlobalKey();
+  final GlobalKey _callButtonKey = GlobalKey();
+  final GlobalKey _profileKey = GlobalKey();
+  final GlobalKey _modulesKey = GlobalKey();
+  
   // Use centralized Supabase service
   String get _supabaseUrl => SupabaseService.supabaseUrl;
   String get _supabaseKey => SupabaseService.supabaseAnonKey;
@@ -54,6 +64,26 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadActiveEmergencyAlert();
     _subscribeToEmergencyAlerts();
     _startEmergencyPolling();
+    _checkAndStartInteractiveTutorial();
+  }
+
+  Future<void> _checkAndStartInteractiveTutorial() async {
+    // Wait for widget tree to build
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final shown = await InteractiveTutorialService.isShowcaseShown('home_interactive_tour');
+      if (!shown && mounted) {
+        // Start the interactive tour
+        ShowCaseWidget.of(context).startShowCase([
+          _weatherKey,
+          _emergencyButtonKey,
+          _myReportsKey,
+          _modulesKey,
+          _callButtonKey,
+          _profileKey,
+        ]);
+        await InteractiveTutorialService.markShowcaseShown('home_interactive_tour');
+      }
+    });
   }
 
   Future<void> _launchPhoneCall(String phoneNumber) async {
@@ -379,8 +409,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
+    return ShowCaseWidget(
+      onFinish: () {},
+      builder: (context) => Scaffold(
+        appBar: AppBar(
         title: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -420,36 +452,55 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
       bottomNavigationBar: _buildCustomBottomNav(),
+      ),
     );
   }
 
   Widget _buildHomeTab() {
     final quickActions = <Widget>[
-      _buildActionCard(
-        icon: Icons.emergency,
-        title: 'Report Emergency',
-        color: Colors.red,
-        onTap: () {
-          Navigator.pushNamed(context, '/emergency-report');
-        },
+      Showcase(
+        key: _emergencyButtonKey,
+        title: '🚨 Report Emergency',
+        description: 'Tap here to quickly report emergencies with photos and your location',
+        targetShapeBorder: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: _buildActionCard(
+          icon: Icons.emergency,
+          title: 'Report Emergency',
+          color: Colors.red,
+          onTap: () {
+            Navigator.pushNamed(context, '/emergency-report');
+          },
+        ),
       ),
-      _buildActionCard(
-        icon: Icons.assignment,
-        title: 'My Reports',
-        color: Colors.blue,
-        onTap: () {
-          Navigator.pushNamed(context, '/my-reports');
-        },
+      Showcase(
+        key: _myReportsKey,
+        title: '📋 Track Reports',
+        description: 'View and track the status of all your submitted reports',
+        targetShapeBorder: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: _buildActionCard(
+          icon: Icons.assignment,
+          title: 'My Reports',
+          color: Colors.blue,
+          onTap: () {
+            Navigator.pushNamed(context, '/my-reports');
+          },
+        ),
       ),
-      _buildActionCard(
-        icon: Icons.menu_book,
-        title: 'Learning Modules',
-        color: Colors.purple,
-        onTap: () {
-          setState(() {
-            _selectedIndex = 1; // Navigate to Module tab
-          });
-        },
+      Showcase(
+        key: _modulesKey,
+        title: '📚 Learn & Practice',
+        description: 'Access educational modules and quizzes about disaster preparedness',
+        targetShapeBorder: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: _buildActionCard(
+          icon: Icons.menu_book,
+          title: 'Learning Modules',
+          color: Colors.purple,
+          onTap: () {
+            setState(() {
+              _selectedIndex = 1; // Navigate to Module tab
+            });
+          },
+        ),
       ),
       _buildSafetyTipsCard(),
     ];
@@ -469,8 +520,13 @@ class _HomeScreenState extends State<HomeScreen> {
             _buildEmergencyBanner(),
             const SizedBox(height: 20),
           ],
-          // Daily Weather Outlook
-          _buildWeatherDashboard(),
+          // Daily Weather Outlook with Interactive Highlight
+          Showcase(
+            key: _weatherKey,
+            title: '🌤️ Live Weather',
+            description: 'Check real-time weather conditions and rain forecasts for LSPU campus',
+            child: _buildWeatherDashboard(),
+          ),
           const SizedBox(height: 24),
           
           // Quick Actions - Modernized
@@ -1525,18 +1581,29 @@ class _HomeScreenState extends State<HomeScreen> {
                 index: 1,
                 isHighlighted: true,
               ),
-              _buildCallNavButton(),
+              Showcase(
+                key: _callButtonKey,
+                title: '📞 Emergency Call',
+                description: 'Quick access to emergency hotlines. Tap to call for immediate help',
+                targetShapeBorder: const CircleBorder(),
+                child: _buildCallNavButton(),
+              ),
               _buildNavItem(
                 icon: Icons.notifications_outlined,
                 activeIcon: Icons.notifications,
                 label: 'Notification',
                 index: 3,
               ),
-              _buildNavItem(
-                icon: Icons.person_outline,
-                activeIcon: Icons.person,
-                label: 'Profile',
-                index: 4,
+              Showcase(
+                key: _profileKey,
+                title: '👤 Your Profile',
+                description: 'Access your profile, view tutorials, and manage settings',
+                child: _buildNavItem(
+                  icon: Icons.person_outline,
+                  activeIcon: Icons.person,
+                  label: 'Profile',
+                  index: 4,
+                ),
               ),
             ],
           ),
@@ -2103,7 +2170,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             _buildMenuItem(
               icon: Icons.help_outline,
-              title: 'View Tutorials',
+              title: 'View Slideshow Tutorial',
               color: const Color(0xFF8b5cf6),
               onTap: () async {
                 await Navigator.push(
@@ -2117,6 +2184,25 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
             _buildMenuItem(
+              icon: Icons.touch_app,
+              title: 'Show Interactive Guide',
+              color: const Color(0xFF10b981),
+              onTap: () async {
+                // Reset and show interactive tour
+                await InteractiveTutorialService.resetShowcase('home_interactive_tour');
+                if (mounted) {
+                  ShowCaseWidget.of(context).startShowCase([
+                    _weatherKey,
+                    _emergencyButtonKey,
+                    _myReportsKey,
+                    _modulesKey,
+                    _callButtonKey,
+                    _profileKey,
+                  ]);
+                }
+              },
+            ),
+            _buildMenuItem(
               icon: Icons.restart_alt,
               title: 'Reset All Tutorials',
               color: const Color(0xFFf59e0b),
@@ -2126,7 +2212,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   builder: (context) => AlertDialog(
                     title: const Text('Reset Tutorials?'),
                     content: const Text(
-                      'This will show all tutorials again as if you\'re using the app for the first time.',
+                      'This will reset both slideshow and interactive tutorials. They will show again as if you\'re using the app for the first time.',
                     ),
                     actions: [
                       TextButton(
@@ -2143,10 +2229,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 
                 if (confirmed == true) {
                   await TutorialService.resetTutorial();
+                  await InteractiveTutorialService.resetAllShowcases();
                   if (mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
-                        content: Text('Tutorials reset successfully!'),
+                        content: Text('All tutorials reset successfully!'),
                         backgroundColor: Color(0xFF10b981),
                       ),
                     );
