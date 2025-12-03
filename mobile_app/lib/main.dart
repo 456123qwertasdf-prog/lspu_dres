@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'services/supabase_service.dart';
 import 'services/onesignal_service.dart';
-import 'services/tutorial_service.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/emergency_report_screen.dart';
@@ -17,8 +16,6 @@ import 'screens/super_user_announcements_screen.dart';
 import 'screens/super_user_map_screen.dart';
 import 'screens/super_user_early_warning_screen.dart';
 import 'screens/report_detail_edit_screen.dart';
-import 'screens/tutorial_screen.dart';
-import 'models/tutorial_model.dart';
 
 // Global navigator key for navigation from anywhere
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -210,25 +207,11 @@ class RoleRouter extends StatefulWidget {
 class _RoleRouterState extends State<RoleRouter> {
   bool _isLoading = true;
   String? _role;
-  bool _shouldShowTutorial = false;
 
   @override
   void initState() {
     super.initState();
-    _initialize();
-  }
-
-  Future<void> _initialize() async {
-    await _determineRole();
-    await _checkTutorial();
-  }
-
-  Future<void> _checkTutorial() async {
-    final tutorialCompleted = await TutorialService.isTutorialCompleted();
-    setState(() {
-      _shouldShowTutorial = !tutorialCompleted;
-      _isLoading = false;
-    });
+    _determineRole();
   }
 
   Future<void> _determineRole() async {
@@ -237,6 +220,7 @@ class _RoleRouterState extends State<RoleRouter> {
       if (userId == null) {
         setState(() {
           _role = null;
+          _isLoading = false;
         });
         return;
       }
@@ -278,6 +262,12 @@ class _RoleRouterState extends State<RoleRouter> {
     } catch (_) {
       if (!mounted) return;
       _role = null;
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -288,19 +278,6 @@ class _RoleRouterState extends State<RoleRouter> {
         body: Center(
           child: CircularProgressIndicator(),
         ),
-      );
-    }
-
-    // Show tutorial if needed (first time login)
-    if (_shouldShowTutorial) {
-      return TutorialScreen(
-        tutorial: AppTutorials.mainTutorial,
-        canSkip: true,
-        onComplete: () {
-          setState(() {
-            _shouldShowTutorial = false;
-          });
-        },
       );
     }
 
