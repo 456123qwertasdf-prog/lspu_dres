@@ -165,6 +165,18 @@ class _SuperUserDashboardScreenState extends State<SuperUserDashboardScreen> {
           .select()
           .single();
 
+      // Send push notifications to all users
+      try {
+        await SupabaseService.client.functions.invoke(
+          'announcement-notify',
+          body: {'announcementId': response['id']},
+        );
+        debugPrint('✅ Push notifications sent for announcement: ${response['id']}');
+      } catch (notifyError) {
+        debugPrint('⚠️ Failed to send push notifications: $notifyError');
+        // Don't fail the whole operation if notifications fail
+      }
+
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
