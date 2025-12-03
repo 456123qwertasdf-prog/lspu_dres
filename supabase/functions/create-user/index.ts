@@ -119,23 +119,24 @@ Deno.serve(async (req) => {
       )
     }
 
-    // Generate verification link and send email with credentials
+    // Generate verification link and send email
     let verificationLink = null
+    let emailSent = false
+    
     try {
-      // Generate email verification link (this also creates the invite email but we'll send our own with credentials)
-      // Set redirect to login page after verification
+      // Generate email verification link
       const redirectUrl = 'https://dres-lspu-edu-ph.456123qwert-asdf.workers.dev/login.html'
       const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
         type: 'signup',
         email: email,
         password: generatedPassword,
         options: {
-          redirectTo: redirectUrl, // Redirect to login page after verification
+          redirectTo: redirectUrl,
           data: {
             full_name: displayName || (email.split('@')[0] || 'User'),
             role,
             must_change_password: true,
-            temporary_password: generatedPassword // Store password in metadata for template access
+            temporary_password: generatedPassword
           }
         }
       })
@@ -144,56 +145,36 @@ Deno.serve(async (req) => {
         verificationLink = linkData.properties.action_link
       }
 
-      if (linkError) {
-        console.error('Error generating verification link:', linkError)
-      }
-
-      // IMPORTANT: Update user metadata FIRST to ensure temporary_password is accessible in email template
-      // Supabase email templates read from user_metadata, so we need to update it before sending invite
-      const { error: updateError } = await supabase.auth.admin.updateUserById(userId, {
+      // Update user metadata
+      await supabase.auth.admin.updateUserById(userId, {
         user_metadata: {
           full_name: displayName || (email.split('@')[0] || 'User'),
           role,
           phone: phone ?? '',
           student_number: studentNumber ?? '',
-          user_type: userType ?? '', // Store user type in metadata
+          user_type: userType ?? '',
           must_change_password: true,
-          temporary_password: generatedPassword // Store actual password for template access
+          temporary_password: generatedPassword
         }
       })
 
-      if (updateError) {
-        console.error('Error updating user metadata:', updateError)
-      } else {
-        console.log('✅ User metadata updated with temporary_password:', generatedPassword.substring(0, 3) + '***')
-      }
-      
-      // verificationLink was already generated above, use it
-
-      // Send invitation email via Supabase - will use custom template if configured
-      // IMPORTANT: The 'data' parameter maps to {{ .Data.* }} in templates
-      // However, there's a known issue where inviteUserByEmail might not pass data correctly
-      // So we also store it in user_metadata for fallback
-      const { data: inviteData, error: inviteError } = await supabase.auth.admin.inviteUserByEmail(email, {
+      // Send invitation email via Supabase
+      const { error: inviteError } = await supabase.auth.admin.inviteUserByEmail(email, {
         data: {
           full_name: displayName || (email.split('@')[0] || 'User'),
           role,
-          must_change_password: true,
-          temporary_password: generatedPassword // This should map to {{ .Data.temporary_password }} in template
+          temporary_password: generatedPassword
         },
-        redirectTo: 'https://dres-lspu-edu-ph.456123qwert-asdf.workers.dev/login.html'
+        redirectTo: redirectUrl
       })
       
-      if (inviteError) {
-        console.error('❌ Error sending invitation email:', inviteError)
-        console.log('⚠️  Email may not be sent. Password available in response for manual sharing.')
-      } else {
+      if (!inviteError) {
+        emailSent = true
         console.log('✅ Invitation email sent via Supabase')
         console.log('🔑 Password for email:', generatedPassword)
-        console.log('📧 Template variable should be: {{ .Data.temporary_password }}')
-        console.log('🔗 Verification link:', finalVerificationLink)
-        console.log('⚠️  CRITICAL: Make sure custom template is uploaded in Supabase Dashboard!')
-        console.log('    Dashboard: https://supabase.com/dashboard/project/hmolyqzbvxxliemclrld/settings/auth')
+        console.log('🔗 Verification link:', verificationLink)
+      } else {
+        console.error('❌ Error sending invitation email:', inviteError)
       }
 
     } catch (emailError) {
@@ -201,83 +182,14 @@ Deno.serve(async (req) => {
       // Continue - user is created even if email fails
     }
 
-    // Prepare email content for manual sending if automated email fails
-    const emailContent = {
-      subject: 'Account Verification - LSPU Emergency Response System',
-      html: `
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <style>
-        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-        .header { background-color: #dc2626; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
-        .content { background-color: #f9fafb; padding: 30px; border: 1px solid #e5e7eb; }
-        .credentials { background-color: white; padding: 20px; margin: 20px 0; border-radius: 8px; border-left: 4px solid #dc2626; }
-        .credential-item { margin: 10px 0; }
-        .label { font-weight: bold; color: #374151; }
-        .value { font-family: monospace; background-color: #f3f4f6; padding: 8px; border-radius: 4px; margin-top: 5px; display: block; }
-        .button { display: inline-block; background-color: #dc2626; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin: 20px 0; }
-        .footer { text-align: center; color: #6b7280; font-size: 12px; margin-top: 30px; }
-        .warning { background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0; border-radius: 4px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>Account Verification - LSPU Emergency Response System</h1>
-        </div>
-        <div class="content">
-            <p>Hello ${displayName},</p>
-            
-            <p>Your account has been created successfully. Please use the following credentials to log in:</p>
-            
-            <div class="credentials">
-                <div class="credential-item">
-                    <span class="label">Email:</span>
-                    <span class="value">${email}</span>
-                </div>
-                <div class="credential-item">
-                    <span class="label">Temporary Password:</span>
-                    <span class="value">${generatedPassword}</span>
-                </div>
-                ${role ? `<div class="credential-item">
-                    <span class="label">Role:</span>
-                    <span class="value">${role}</span>
-                </div>` : ''}
-            </div>
-            
-            <div class="warning">
-                <strong>⚠️ Important:</strong> For security reasons, please change your password immediately after your first login.
-            </div>
-            
-            ${verificationLink ? `
-            <p>Click the button below to verify your email and complete your account setup:</p>
-            <a href="${verificationLink}" class="button">Verify Email Address</a>
-            <p style="font-size: 12px; color: #6b7280;">Or copy and paste this link into your browser:<br>${verificationLink}</p>
-            ` : `
-            <p>Please verify your email address by logging in with the credentials above.</p>
-            `}
-            
-            <p>Thank you for joining the LSPU Emergency Response System!</p>
-            
-            <div class="footer">
-                <p>This is an automated message. Please do not reply to this email.</p>
-                <p>© ${new Date().getFullYear()} LSPU Emergency Response System</p>
-            </div>
-        </div>
-    </div>
-</body>
-</html>
-      `
-    }
-
     return new Response(
       JSON.stringify({ 
         user: created.user, 
         profile,
-        message: 'User created successfully. Verification email sent.',
+        message: emailSent 
+          ? 'User created successfully. Verification email sent with credentials.' 
+          : 'User created successfully. Email sending failed - credentials included below.',
+        email_sent: emailSent,
         password_sent: isTemporaryPassword,
         email: email,
         password: generatedPassword, // Include password directly for admin to see/share
@@ -287,10 +199,12 @@ Deno.serve(async (req) => {
           role: role
         },
         verification_link: verificationLink,
-        email_content: emailContent,
         note: isTemporaryPassword 
           ? `Temporary password generated: ${generatedPassword}. User should change it after first login.`
-          : 'Password provided by admin. User should change it after first login.'
+          : 'Password provided by admin. User should change it after first login.',
+        setup_note: !emailSent 
+          ? 'Configure RESEND_API_KEY in Supabase Edge Function secrets to send custom emails with APK download link.'
+          : null
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )

@@ -1,8 +1,7 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "https://hmolyqzbvxxliemclrld.supabase.co";
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imhtb2x5cXpidnh4bGllbWNscmxkIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MDI0Njk3MCwiZXhwIjoyMDc1ODIyOTcwfQ.496txRbAGuiOov76vxdwSDUHplBt1osOD2PyV0EE958";
-const OPENWEATHER_API_KEY = Deno.env.get("OPENWEATHER_API_KEY") || "d47a28878273fd3d6621539029b64cc1";
 
 const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false },
@@ -50,7 +49,7 @@ interface EnhancedWeatherData {
       description: string;
       rain_volume: number;
     }>;
-  };
+  } | null;
 }
 
 interface WeatherAlert {
@@ -146,70 +145,128 @@ Deno.serve(async (req) => {
   }
 });
 
-// Get enhanced weather data from OpenWeatherMap API
+// Get enhanced weather data from cache (AccuWeather or WeatherAPI fallback)
 async function getEnhancedWeatherData(latitude: number, longitude: number): Promise<EnhancedWeatherData> {
   try {
-    // Get current weather data
-    const currentResponse = await fetch(
-      `https://api.openweathermap.org/data/2.5/weather?lat=${latitude}&lon=${longitude}&appid=${OPENWEATHER_API_KEY}&units=metric`
-    );
+    // Fetch from weather cache
+    const { data: cachedWeather, error: cacheError } = await supabase
+      .from('weather_cache')
+      .select('*')
+      .eq('latitude', latitude)
+      .eq('longitude', longitude)
+      .single();
 
-    if (!currentResponse.ok) {
-      throw new Error(`Current weather API error: ${currentResponse.status} ${currentResponse.statusText}`);
+    if (cacheError || !cachedWeather) {
+      console.warn('⚠️ Weather cache not found, triggering update...');
+      
+      // Trigger cache update asynchronously
+      try {
+        await fetch(`${SUPABASE_URL}/functions/v1/update-weather-cache`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${SERVICE_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ location: 'LSPU' })
+        });
+      } catch (updateError) {
+        console.error('❌ Failed to trigger cache update:', updateError);
+      }
+      
+      throw new Error('Weather cache not available. Please try again in a few moments.');
     }
 
-    const currentData = await currentResponse.json();
-
-    // Get forecast data for rain chance (5-day forecast with 3-hour intervals)
-    const forecastResponse = await fetch(
-      `https://api.openweathermap.org/data/2.5/forecast?lat=${latitude}&lon=${longitude}&appid=${OPENWEATHER_API_KEY}&units=metric`
-    );
-
-    let forecastData = null;
-    if (forecastResponse.ok) {
-      forecastData = await forecastResponse.json();
+    // Check if cache is stale (older than 3 hours)
+    const cacheAge = Date.now() - new Date(cachedWeather.last_updated).getTime();
+    const threeHoursInMs = 3 * 60 * 60 * 1000;
+    
+    if (cacheAge > threeHoursInMs) {
+      console.warn(`⚠️ Weather cache is stale (${Math.round(cacheAge / 1000 / 60)} minutes old)`);
+      
+      // Trigger cache update asynchronously (don't wait)
+      fetch(`${SUPABASE_URL}/functions/v1/update-weather-cache`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${SERVICE_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ location: 'LSPU' })
+      }).catch(err => console.error('Failed to update stale cache:', err));
     }
 
-    // Get weather alerts
-    const alertsResponse = await fetch(
-      `https://api.openweathermap.org/data/2.5/onecall?lat=${latitude}&lon=${longitude}&appid=${OPENWEATHER_API_KEY}&units=metric&exclude=minutely,daily`
-    );
+    console.log(`✅ Using cached weather data from ${cachedWeather.data_source} (updated: ${cachedWeather.last_updated})`);
 
-    let alertsData = null;
-    if (alertsResponse.ok) {
-      alertsData = await alertsResponse.json();
-    }
-
-    // Process forecast data for rain chance analysis
-    let forecastSummary = null;
-    if (forecastData && forecastData.list) {
-      const next24Hours = forecastData.list.slice(0, 8); // Next 24 hours (3-hour intervals)
-      const rainChances = next24Hours.map(item => item.pop || 0);
-      const maxRainChance = Math.max(...rainChances);
-      const avgRainChance = rainChances.reduce((sum, chance) => sum + chance, 0) / rainChances.length;
+    // Process hourly forecast for 24h summary
+    let forecastSummary: {
+      next_24h_max_rain_chance: number;
+      next_24h_avg_rain_chance: number;
+      next_24h_forecast: Array<{
+        time: string;
+        temp: number;
+        rain_chance: number;
+        description: string;
+        rain_volume: number;
+      }>;
+    } | null = null;
+    
+    if (cachedWeather.hourly_forecast && Array.isArray(cachedWeather.hourly_forecast)) {
+      const next24Hours = cachedWeather.hourly_forecast.slice(0, 24);
+      const rainChances = next24Hours.map(item => item.rain_chance || 0);
+      const maxRainChance = Math.max(...rainChances) / 100; // Convert from percentage
+      const avgRainChance = rainChances.reduce((sum, chance) => sum + chance, 0) / rainChances.length / 100;
       
       forecastSummary = {
         next_24h_max_rain_chance: maxRainChance,
         next_24h_avg_rain_chance: avgRainChance,
         next_24h_forecast: next24Hours.map(item => ({
-          time: new Date(item.dt * 1000).toISOString(),
-          temp: item.main.temp,
-          rain_chance: item.pop || 0,
-          description: item.weather[0].description,
-          rain_volume: item.rain?.["3h"] || 0
+          time: item.time,
+          temp: item.temp,
+          rain_chance: (item.rain_chance || 0) / 100,
+          description: item.description,
+          rain_volume: item.rain_volume || 0
         }))
+      };
+    } else if (cachedWeather.daily_forecast && Array.isArray(cachedWeather.daily_forecast)) {
+      // Fallback to daily forecast if hourly not available (AccuWeather free tier)
+      const today = cachedWeather.daily_forecast[0];
+      const maxRainChance = (today?.rain_probability || 0) / 100;
+      
+      forecastSummary = {
+        next_24h_max_rain_chance: maxRainChance,
+        next_24h_avg_rain_chance: maxRainChance,
+        next_24h_forecast: []
       };
     }
 
+    // Normalize cached data to EnhancedWeatherData format
     return {
-      ...currentData,
-      pop: currentData.pop || 0,
-      alerts: alertsData?.alerts || [],
-      forecast_summary: forecastSummary
+      main: {
+        temp: cachedWeather.temperature,
+        feels_like: cachedWeather.feels_like,
+        humidity: cachedWeather.humidity,
+        pressure: cachedWeather.pressure
+      },
+      weather: [{
+        main: cachedWeather.weather_text,
+        description: cachedWeather.weather_text,
+        icon: cachedWeather.weather_icon
+      }],
+      wind: {
+        speed: cachedWeather.wind_speed / 3.6, // Convert km/h to m/s for consistency
+        deg: cachedWeather.wind_direction
+      },
+      visibility: cachedWeather.visibility * 1000, // Convert km to meters
+      rain: cachedWeather.rain_1h ? { "1h": cachedWeather.rain_1h } : undefined,
+      clouds: {
+        all: cachedWeather.cloud_cover
+      },
+      pop: (cachedWeather.rain_probability || 0) / 100,
+      alerts: cachedWeather.weather_alerts || [],
+      forecast_summary: forecastSummary || null
     };
 
   } catch (error) {
-    console.error('❌ Error fetching enhanced weather data:', error);
+    console.error('❌ Error fetching weather data from cache:', error);
     throw error;
   }
 }
@@ -246,7 +303,7 @@ function analyzeEnhancedWeatherConditions(data: EnhancedWeatherData, city: strin
   // Rain Analysis
   const rainVolume = data.rain?.["1h"] || 0;
   const rainChance = (data.pop || 0) * 100;
-  const maxRainChance = data.forecast_summary?.next_24h_max_rain_chance * 100 || 0;
+  const maxRainChance = (data.forecast_summary?.next_24h_max_rain_chance ?? 0) * 100;
 
   if (rainVolume >= 7.5) {
     alerts.push({
