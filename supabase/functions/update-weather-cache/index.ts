@@ -73,84 +73,84 @@ Deno.serve(async (req) => {
     const totalAccuWeatherCalls = usageToday?.reduce((sum, record) => sum + record.calls_count, 0) || 0;
     console.log(`📊 AccuWeather calls today: ${totalAccuWeatherCalls}/50`);
 
-    let weatherData;
+    let currentWeatherData;
+    let forecastData;
     let dataSource;
-    let responseTime;
-    let apiSuccess = true;
+    let totalResponseTime = 0;
     let errorMessage = null;
 
-    // Try AccuWeather first if we haven't reached the daily limit
+    // HYBRID STRATEGY: Use AccuWeather for current conditions, WeatherAPI for forecast
+    console.log("🌟 Implementing hybrid strategy: AccuWeather (current) + WeatherAPI (forecast)...");
+
+    // Step 1: Try AccuWeather for current conditions (most accurate)
     if (totalAccuWeatherCalls < 45) { // Buffer of 5 calls
-      console.log("🌟 Attempting to fetch from AccuWeather (primary)...");
+      console.log("📊 Fetching current conditions from AccuWeather...");
       try {
         const result = await fetchAccuWeatherData(LSPU_LATITUDE, LSPU_LONGITUDE);
-        weatherData = result.data;
-        responseTime = result.responseTime;
-        dataSource = 'accuweather';
+        currentWeatherData = result.data;
+        totalResponseTime += result.responseTime;
         
         // Log AccuWeather API usage (2 calls: location + current conditions)
         await supabase.from('weather_api_usage').insert({
           api_provider: 'accuweather',
-          endpoint: 'currentconditions + forecast',
+          endpoint: 'currentconditions',
           calls_count: 2,
           success: true,
-          response_time_ms: responseTime
+          response_time_ms: result.responseTime
         });
         
-        console.log(`✅ AccuWeather data fetched successfully`);
+        console.log(`✅ AccuWeather current conditions fetched (${result.responseTime}ms)`);
       } catch (error) {
         console.warn(`⚠️ AccuWeather failed: ${error.message}`);
-        apiSuccess = false;
         errorMessage = error.message;
         
         // Log failed attempt
         await supabase.from('weather_api_usage').insert({
           api_provider: 'accuweather',
-          endpoint: 'currentconditions + forecast',
+          endpoint: 'currentconditions',
           calls_count: 0,
           success: false,
           error_message: error.message
         });
         
-        // Fall through to WeatherAPI
-        weatherData = null;
+        currentWeatherData = null;
       }
     } else {
-      console.log("⚠️ AccuWeather daily limit approaching, using WeatherAPI.com fallback");
-      weatherData = null;
+      console.log("⚠️ AccuWeather daily limit approaching, skipping AccuWeather");
+      currentWeatherData = null;
     }
 
-    // Fallback to WeatherAPI.com if AccuWeather failed or limit reached
-    if (!weatherData) {
-      console.log("🔄 Falling back to WeatherAPI.com...");
-      try {
-        const result = await fetchWeatherAPIData(LSPU_LATITUDE, LSPU_LONGITUDE);
-        weatherData = result.data;
-        responseTime = result.responseTime;
-        dataSource = 'weatherapi';
-        
-        // Log WeatherAPI usage (2 calls: current + forecast)
-        await supabase.from('weather_api_usage').insert({
-          api_provider: 'weatherapi',
-          endpoint: 'current + forecast',
-          calls_count: 2,
-          success: true,
-          response_time_ms: responseTime
-        });
-        
-        console.log(`✅ WeatherAPI.com data fetched successfully`);
-      } catch (error) {
-        console.error(`❌ WeatherAPI.com also failed: ${error.message}`);
-        
-        // Log failed attempt
-        await supabase.from('weather_api_usage').insert({
-          api_provider: 'weatherapi',
-          endpoint: 'current + forecast',
-          calls_count: 0,
-          success: false,
-          error_message: error.message
-        });
-        
+    // Step 2: Fetch forecast from WeatherAPI.com (includes hourly + air quality)
+    console.log("📈 Fetching forecast data from WeatherAPI.com...");
+    try {
+      const result = await fetchWeatherAPIData(LSPU_LATITUDE, LSPU_LONGITUDE);
+      forecastData = result.data;
+      totalResponseTime += result.responseTime;
+      
+      // Log WeatherAPI usage (2 calls: current + forecast)
+      await supabase.from('weather_api_usage').insert({
+        api_provider: 'weatherapi',
+        endpoint: 'current + forecast',
+        calls_count: 2,
+        success: true,
+        response_time_ms: result.responseTime
+      });
+      
+      console.log(`✅ WeatherAPI.com forecast fetched (${result.responseTime}ms)`);
+    } catch (error) {
+      console.error(`❌ WeatherAPI.com failed: ${error.message}`);
+      
+      // Log failed attempt
+      await supabase.from('weather_api_usage').insert({
+        api_provider: 'weatherapi',
+        endpoint: 'current + forecast',
+        calls_count: 0,
+        success: false,
+        error_message: error.message
+      });
+      
+      // If both failed, return error
+      if (!currentWeatherData) {
         return new Response(JSON.stringify({
           success: false,
           error: 'Both APIs failed',
@@ -163,6 +163,39 @@ Deno.serve(async (req) => {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
       }
+      
+      forecastData = null;
+    }
+
+    // Step 3: Merge data - prefer AccuWeather current, use WeatherAPI forecast
+    let weatherData;
+    if (currentWeatherData && forecastData) {
+      // Best case: AccuWeather current + WeatherAPI forecast
+      dataSource = 'hybrid:accuweather+weatherapi';
+      weatherData = {
+        ...currentWeatherData,
+        // Override with WeatherAPI forecast data
+        hourly_forecast: forecastData.hourly_forecast,
+        daily_forecast: forecastData.daily_forecast,
+        // Add air quality from WeatherAPI
+        air_quality_index: forecastData.air_quality_index,
+        pm2_5: forecastData.pm2_5,
+        pm10: forecastData.pm10
+      };
+      console.log("✅ Hybrid data merged: AccuWeather current + WeatherAPI forecast");
+    } else if (forecastData) {
+      // Fallback: WeatherAPI only (includes everything)
+      dataSource = 'weatherapi';
+      weatherData = forecastData;
+      console.log("✅ Using WeatherAPI.com for all data");
+    } else if (currentWeatherData) {
+      // Fallback: AccuWeather only (no hourly forecast)
+      dataSource = 'accuweather';
+      weatherData = currentWeatherData;
+      console.log("⚠️ Using AccuWeather only (no hourly forecast available)");
+    } else {
+      // Should not reach here due to earlier error return
+      throw new Error('No weather data available from any source');
     }
 
     // Update weather cache in database
@@ -222,11 +255,14 @@ Deno.serve(async (req) => {
       data_source: dataSource,
       temperature: weatherData.temperature,
       weather_text: weatherData.weather_text,
+      has_hourly_forecast: !!weatherData.hourly_forecast,
+      has_air_quality: !!weatherData.air_quality_index,
       last_updated: now.toISOString(),
       cache_expires_at: expiresAt.toISOString(),
-      response_time_ms: responseTime,
+      response_time_ms: totalResponseTime,
       api_usage: {
-        accuweather_calls_today: totalAccuWeatherCalls + (dataSource === 'accuweather' ? 2 : 0),
+        accuweather_calls_today: totalAccuWeatherCalls + (currentWeatherData ? 2 : 0),
+        weatherapi_calls_used: forecastData ? 2 : 0,
         limit: 50
       }
     }), {
