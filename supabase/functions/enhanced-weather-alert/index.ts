@@ -148,21 +148,26 @@ Deno.serve(async (req) => {
 // Get enhanced weather data from cache (AccuWeather or WeatherAPI fallback)
 async function getEnhancedWeatherData(latitude: number, longitude: number): Promise<EnhancedWeatherData> {
   try {
-    // Fetch from weather cache using proximity search (handles decimal precision issues)
-    // Search within ~100 meters of requested coordinates
-    const { data: cachedWeather, error: cacheError } = await supabase
+    console.log(`🔍 Looking for weather cache at (${latitude}, ${longitude})`);
+    
+    // Fetch from weather cache using proximity search (handles decimal precision)
+    // DECIMAL(10,8) in database vs JavaScript number precision can cause exact match failures
+    const { data: allCache } = await supabase
       .from('weather_cache')
-      .select('*')
-      .gte('latitude', latitude - 0.001)
-      .lte('latitude', latitude + 0.001)
-      .gte('longitude', longitude - 0.001)
-      .lte('longitude', longitude + 0.001)
-      .limit(1)
-      .single();
+      .select('*');
+    
+    console.log(`📊 Found ${allCache?.length || 0} cache entries`);
+    
+    // Find closest match (within ~100 meters)
+    const cachedWeather = allCache?.find(cache => {
+      const latDiff = Math.abs(cache.latitude - latitude);
+      const lonDiff = Math.abs(cache.longitude - longitude);
+      return latDiff < 0.001 && lonDiff < 0.001;
+    });
 
-    if (cacheError || !cachedWeather) {
-      console.warn(`⚠️ Weather cache not found for coords (${latitude}, ${longitude}), triggering update...`);
-      console.error('Cache error:', cacheError);
+    if (!cachedWeather) {
+      console.warn(`⚠️ Weather cache not found for coords (${latitude}, ${longitude})`);
+      console.log('Available cache entries:', allCache);
       
       // Trigger cache update asynchronously
       try {
@@ -181,7 +186,7 @@ async function getEnhancedWeatherData(latitude: number, longitude: number): Prom
       throw new Error('Weather cache not available. Please try again in a few moments.');
     }
     
-    console.log(`✅ Found cached weather at (${cachedWeather.latitude}, ${cachedWeather.longitude}) for request (${latitude}, ${longitude})`);
+    console.log(`✅ Found weather cache at (${cachedWeather.latitude}, ${cachedWeather.longitude}) for request (${latitude}, ${longitude})`);
 
     // Check if cache is stale (older than 3 hours)
     const cacheAge = Date.now() - new Date(cachedWeather.last_updated).getTime();
