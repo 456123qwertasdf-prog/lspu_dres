@@ -181,7 +181,7 @@ Deno.serve(async (req) => {
           must_change_password: true,
           temporary_password: generatedPassword // This should map to {{ .Data.temporary_password }} in template
         },
-        redirectTo: 'http://127.0.0.1:8000/login.html'
+        redirectTo: 'https://dres-lspu-edu-ph.456123qwert-asdf.workers.dev/login.html'
       })
       
       if (inviteError) {
