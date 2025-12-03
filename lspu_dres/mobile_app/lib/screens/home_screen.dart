@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/supabase_service.dart';
 import '../services/emergency_sound_service.dart';
+import '../services/onesignal_service.dart';
 import 'learning_modules_screen.dart';
 import 'notifications_screen.dart';
 
@@ -46,7 +47,10 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    print('🏠 HomeScreen initState called');
+    print('🌤️ Calling _loadWeatherData...');
     _loadWeatherData();
+    print('👤 Calling _loadUserProfile...');
     _loadUserProfile();
     _loadActiveEmergencyAlert();
     _subscribeToEmergencyAlerts();
@@ -73,14 +77,18 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadWeatherData() async {
+    print('🌤️ Starting weather data load...');
     setState(() {
       _isLoadingWeather = true;
       _weatherStatus = 'Loading...';
     });
 
     try {
+      final url = '$_supabaseUrl/functions/v1/enhanced-weather-alert';
+      print('🌤️ Weather API URL: $url');
+      
       final response = await http.post(
-        Uri.parse('$_supabaseUrl/functions/v1/enhanced-weather-alert'),
+        Uri.parse(url),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $_supabaseKey',
@@ -92,18 +100,25 @@ class _HomeScreenState extends State<HomeScreen> {
         }),
       );
 
+      print('🌤️ Weather API Response Status: ${response.statusCode}');
+      print('🌤️ Weather API Response Body: ${response.body}');
+
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
+        print('🌤️ Weather data parsed successfully');
         setState(() {
           _weatherData = data['weather_data'] ?? data;
           _weatherStatus = 'Live';
           _isLoadingWeather = false;
           _lastUpdated = DateTime.now();
         });
+        print('✅ Weather data loaded: Temperature ${_weatherData?['main']?['temp']}°C');
       } else {
-        throw Exception('Failed to load weather data');
+        print('❌ Weather API returned status ${response.statusCode}');
+        throw Exception('Failed to load weather data: ${response.statusCode}');
       }
     } catch (e) {
+      print('❌ Weather loading error: $e');
       setState(() {
         _weatherStatus = 'Error';
         _isLoadingWeather = false;
@@ -167,6 +182,59 @@ class _HomeScreenState extends State<HomeScreen> {
         _isLoadingProfile = false;
       });
       // Silently fail - don't show error for profile loading
+    }
+  }
+
+  Future<void> _syncOneSignalPlayerId() async {
+    // Show loading dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: CircularProgressIndicator(),
+      ),
+    );
+
+    try {
+      final userId = SupabaseService.currentUserId;
+      
+      if (userId == null) {
+        Navigator.pop(context); // Close loading
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('❌ Not logged in. Please login first.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      debugPrint('🔄 Manual sync: Saving OneSignal Player ID...');
+      await OneSignalService().retrySavePlayerIdToSupabase();
+      
+      if (mounted) {
+        Navigator.pop(context); // Close loading
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ Notifications synced successfully!'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context); // Close loading
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Sync failed: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -2097,6 +2165,12 @@ class _HomeScreenState extends State<HomeScreen> {
               onTap: () {
                 Navigator.pushNamed(context, '/map');
               },
+            ),
+            _buildMenuItem(
+              icon: Icons.notifications_active,
+              title: 'Sync Notifications (OneSignal)',
+              color: const Color(0xFF10b981),
+              onTap: _syncOneSignalPlayerId,
             ),
             const SizedBox(height: 16),
             _buildMenuItem(

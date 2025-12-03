@@ -11,6 +11,32 @@ class OneSignalService {
 
   static const String _onesignalAppId = '8d6aa625-a650-47ac-b9ba-00a247840952';
   String? _playerId;
+  
+  // Callbacks for notification taps
+  Function(String reportId, String? assignmentId)? _onAssignmentNotificationTap;
+  Function(String announcementId)? _onEmergencyNotificationTap;
+  Function(String reportId)? _onReportUpdateNotificationTap;
+  Function(String reportId)? _onCriticalReportNotificationTap;
+  
+  /// Set callback for assignment notification taps (RESPONDER)
+  void setOnAssignmentNotificationTap(Function(String reportId, String? assignmentId) callback) {
+    _onAssignmentNotificationTap = callback;
+  }
+  
+  /// Set callback for emergency notification taps (ALL USERS)
+  void setOnEmergencyNotificationTap(Function(String announcementId) callback) {
+    _onEmergencyNotificationTap = callback;
+  }
+  
+  /// Set callback for report update notification taps (CITIZEN - their own reports)
+  void setOnReportUpdateNotificationTap(Function(String reportId) callback) {
+    _onReportUpdateNotificationTap = callback;
+  }
+  
+  /// Set callback for critical report notification taps (SUPER USER)
+  void setOnCriticalReportNotificationTap(Function(String reportId) callback) {
+    _onCriticalReportNotificationTap = callback;
+  }
 
   /// Initialize OneSignal SDK
   Future<void> initialize() async {
@@ -99,7 +125,7 @@ class OneSignalService {
 
       debugPrint('💾 Saving OneSignal Player ID to Supabase: $playerId for user: $userId');
 
-      // Save to Supabase - use upsert to handle both insert and update
+      // Save to onesignal_subscriptions table (supports multiple devices per user)
       final response = await SupabaseService.client
           .from('onesignal_subscriptions')
           .upsert({
@@ -110,10 +136,10 @@ class OneSignalService {
           }, onConflict: 'user_id,player_id')
           .select();
       
-      if (response != null) {
-      debugPrint('✅ OneSignal Player ID saved to Supabase: $playerId');
+      if (response != null && response.isNotEmpty) {
+        debugPrint('✅ OneSignal Player ID saved to Supabase: $playerId');
       } else {
-        debugPrint('⚠️ OneSignal Player ID save returned null response');
+        debugPrint('⚠️ OneSignal Player ID save returned null/empty response');
       }
     } catch (e) {
       debugPrint('❌ Error saving OneSignal Player ID: $e');
@@ -128,43 +154,47 @@ class OneSignalService {
       if (data != null) {
         final type = data['type'] as String?;
         
+        // Handle assignment notifications (RESPONDER)
         if (type == 'assignment') {
-          // Handle assignment notification (for responders)
+          final reportId = data['report_id'] as String?;
           final assignmentId = data['assignment_id'] as String?;
-          final reportId = data['report_id'] as String?;
-          final isCritical = data['is_critical'] as bool?;
           
-          debugPrint('🚨 Assignment notification tapped:');
-          debugPrint('  - Assignment ID: $assignmentId');
-          debugPrint('  - Report ID: $reportId');
-          debugPrint('  - Critical: ${isCritical == true ? 'YES' : 'NO'}');
-          
-          // TODO: Navigate to assignment details or report screen
-          // You can use a navigator key or callback here
-          // Example: NavigationService.navigateToAssignment(assignmentId);
-          
-        } else if (type == 'critical_report') {
-          // Handle critical report notification (for super users/admins)
-          final reportId = data['report_id'] as String?;
-          final reportType = data['report_type'] as String?;
-          final priority = data['priority'];
-          final severity = data['severity'] as String?;
-          
-          debugPrint('🚨 CRITICAL REPORT notification tapped:');
-          debugPrint('  - Report ID: $reportId');
-          debugPrint('  - Type: $reportType');
-          debugPrint('  - Priority: $priority');
-          debugPrint('  - Severity: $severity');
-          debugPrint('  ⚠️ ACTION REQUIRED: Assign responder immediately!');
-          
-          // TODO: Navigate to reports screen to assign responder
-          // Example: NavigationService.navigateToReports(reportId: reportId);
-          
-        } else if (type == 'emergency') {
-          // Handle emergency announcement
+          if (reportId != null) {
+            debugPrint('📱 Assignment notification tapped - Report ID: $reportId');
+            if (_onAssignmentNotificationTap != null) {
+              _onAssignmentNotificationTap!(reportId, assignmentId);
+            }
+          }
+        }
+        // Handle emergency announcements (ALL USERS)
+        else if (type == 'emergency' || type == 'announcement') {
           final announcementId = data['announcement_id'] as String?;
-          debugPrint('Emergency notification tapped: $announcementId');
-          // TODO: Navigate to map or announcement details
+          if (announcementId != null) {
+            debugPrint('📱 Emergency notification tapped: $announcementId');
+            if (_onEmergencyNotificationTap != null) {
+              _onEmergencyNotificationTap!(announcementId);
+            }
+          }
+        }
+        // Handle report status updates (CITIZEN - their own reports)
+        else if (type == 'report_update' || type == 'report_status') {
+          final reportId = data['report_id'] as String?;
+          if (reportId != null) {
+            debugPrint('📱 Report update notification tapped - Report ID: $reportId');
+            if (_onReportUpdateNotificationTap != null) {
+              _onReportUpdateNotificationTap!(reportId);
+            }
+          }
+        }
+        // Handle critical report notifications (SUPER USER)
+        else if (type == 'critical_report' || type == 'high_priority_report') {
+          final reportId = data['report_id'] as String?;
+          if (reportId != null) {
+            debugPrint('📱 Critical report notification tapped - Report ID: $reportId');
+            if (_onCriticalReportNotificationTap != null) {
+              _onCriticalReportNotificationTap!(reportId);
+            }
+          }
         }
       }
     } catch (e) {
@@ -178,26 +208,10 @@ class OneSignalService {
       final data = event.notification.additionalData;
       if (data != null) {
         final type = data['type'] as String?;
-        final soundService = NotificationSoundService();
         
-        // Play custom sound for emergency notifications and critical assignments
+        // Play custom sound for emergency notifications
         if (type == 'emergency') {
-          soundService.playEmergencySound();
-        } else if (type == 'assignment') {
-          // Check if assignment is critical/high priority
-          final isCritical = data['is_critical'] as bool?;
-          if (isCritical == true) {
-            // Play emergency sound for critical/high priority assignments
-            debugPrint('🔊 Playing emergency sound for CRITICAL/HIGH priority assignment');
-            soundService.playEmergencySound();
-          } else {
-            // Play default sound for normal priority assignments
-            debugPrint('🔔 Playing default sound for normal priority assignment');
-            soundService.playDefaultSound();
-          }
-        } else if (type == 'critical_report') {
-          // ALWAYS play emergency sound for critical reports (super users/admins)
-          debugPrint('🚨 Playing emergency sound for CRITICAL REPORT (super user alert)');
+          final soundService = NotificationSoundService();
           soundService.playEmergencySound();
         }
       }
@@ -208,6 +222,23 @@ class OneSignalService {
 
   /// Get current player ID
   String? get playerId => _playerId;
+
+  /// Retry saving player ID to Supabase (call this after login)
+  Future<void> retrySavePlayerIdToSupabase() async {
+    if (_playerId != null && _playerId!.isNotEmpty) {
+      debugPrint('🔄 Retrying to save OneSignal Player ID after login...');
+      await _savePlayerIdToSupabase(_playerId!);
+    } else {
+      debugPrint('⚠️ Cannot retry: Player ID not available yet');
+      // Try to get it again
+      final currentId = OneSignal.User.pushSubscription.id;
+      if (currentId != null && currentId.isNotEmpty) {
+        _playerId = currentId;
+        debugPrint('🔄 Found Player ID, saving now: $_playerId');
+        await _savePlayerIdToSupabase(_playerId!);
+      }
+    }
+  }
 
   /// Send tags to OneSignal (for user segmentation)
   Future<void> setTag(String key, String value) async {
@@ -229,4 +260,3 @@ class OneSignalService {
     }
   }
 }
-
