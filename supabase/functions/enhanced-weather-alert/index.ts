@@ -148,16 +148,21 @@ Deno.serve(async (req) => {
 // Get enhanced weather data from cache (AccuWeather or WeatherAPI fallback)
 async function getEnhancedWeatherData(latitude: number, longitude: number): Promise<EnhancedWeatherData> {
   try {
-    // Fetch from weather cache
+    // Fetch from weather cache using proximity search (handles decimal precision issues)
+    // Search within ~100 meters of requested coordinates
     const { data: cachedWeather, error: cacheError } = await supabase
       .from('weather_cache')
       .select('*')
-      .eq('latitude', latitude)
-      .eq('longitude', longitude)
+      .gte('latitude', latitude - 0.001)
+      .lte('latitude', latitude + 0.001)
+      .gte('longitude', longitude - 0.001)
+      .lte('longitude', longitude + 0.001)
+      .limit(1)
       .single();
 
     if (cacheError || !cachedWeather) {
-      console.warn('⚠️ Weather cache not found, triggering update...');
+      console.warn(`⚠️ Weather cache not found for coords (${latitude}, ${longitude}), triggering update...`);
+      console.error('Cache error:', cacheError);
       
       // Trigger cache update asynchronously
       try {
@@ -175,6 +180,8 @@ async function getEnhancedWeatherData(latitude: number, longitude: number): Prom
       
       throw new Error('Weather cache not available. Please try again in a few moments.');
     }
+    
+    console.log(`✅ Found cached weather at (${cachedWeather.latitude}, ${cachedWeather.longitude}) for request (${latitude}, ${longitude})`);
 
     // Check if cache is stale (older than 3 hours)
     const cacheAge = Date.now() - new Date(cachedWeather.last_updated).getTime();
