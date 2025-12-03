@@ -127,10 +127,24 @@ serve(async (req) => {
       })
     }
 
-    // Trigger classification (async) - don't await to avoid blocking
-    // The classify-image function will fetch the report from DB, so we ensure image_path is set
-    triggerImageClassification(supabaseClient, insertedReport.id, finalImagePath)
-      .catch(err => console.warn('Background classification error (non-critical):', err))
+    // If image is a duplicate, try to reuse existing classification
+    if (isDuplicate) {
+      const classificationCopied = await copyExistingClassification(supabaseClient, imageHash, insertedReport.id)
+      
+      if (classificationCopied) {
+        console.log(`✅ Reused classification from previous report with same image hash`)
+      } else {
+        // No existing classification found, trigger new one
+        console.log('Duplicate image but no classification found, triggering new analysis')
+        triggerImageClassification(supabaseClient, insertedReport.id, finalImagePath)
+          .catch(err => console.warn('Background classification error (non-critical):', err))
+      }
+    } else {
+      // New unique image - trigger classification
+      console.log('New unique image, triggering AI classification')
+      triggerImageClassification(supabaseClient, insertedReport.id, finalImagePath)
+        .catch(err => console.warn('Background classification error (non-critical):', err))
+    }
 
     // Emit real-time event for new report
     await emitReportCreatedEvent(supabaseClient, insertedReport)
@@ -486,6 +500,131 @@ async function getOrCreateReporter(
   return {
     uid: data.user_id || newReporter.id,
     name: newReporter.name
+  }
+}
+
+/**
+ * Copy classification from an existing report with the same image hash
+ * Returns true if classification was copied, false if no suitable report found
+ */
+async function copyExistingClassification(
+  supabaseClient: any,
+  imageHash: string,
+  newReportId: string
+): Promise<boolean> {
+  try {
+    console.log('🔍 Looking for existing classification for image hash:', imageHash)
+    
+    // Find a report with the same image hash that has been classified
+    const { data: existingReport, error: findError } = await supabaseClient
+      .from('reports')
+      .select('id, type, confidence, ai_labels, priority, severity, emergency_icon, response_time, status')
+      .eq('image_hash', imageHash)
+      .not('type', 'is', null)
+      .not('status', 'eq', 'pending')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    
+    if (findError) {
+      console.warn('Error finding existing classification:', findError)
+      return false
+    }
+    
+    if (!existingReport || !existingReport.type) {
+      console.log('No existing classification found for this image hash')
+      return false
+    }
+    
+    console.log('✅ Found existing classification:', {
+      type: existingReport.type,
+      confidence: existingReport.confidence,
+      priority: existingReport.priority,
+      severity: existingReport.severity
+    })
+    
+    // Copy classification fields to new report
+    const updateData: any = {
+      type: existingReport.type,
+      confidence: existingReport.confidence,
+      ai_labels: existingReport.ai_labels,
+      status: 'classified',
+      lifecycle_status: 'classified',
+      last_update: new Date().toISOString()
+    }
+    
+    // Copy priority/severity if available
+    if (existingReport.priority) updateData.priority = existingReport.priority
+    if (existingReport.severity) updateData.severity = existingReport.severity
+    if (existingReport.emergency_icon) updateData.emergency_icon = existingReport.emergency_icon
+    if (existingReport.response_time) updateData.response_time = existingReport.response_time
+    
+    const { error: updateError } = await supabaseClient
+      .from('reports')
+      .update(updateData)
+      .eq('id', newReportId)
+    
+    if (updateError) {
+      console.error('Failed to copy classification:', updateError)
+      return false
+    }
+    
+    console.log(`✅ Successfully copied classification from existing report to new report ${newReportId}`)
+    
+    // If it's a critical/high priority report, still notify super users
+    if (existingReport.priority <= 2 || existingReport.severity === 'CRITICAL' || existingReport.severity === 'HIGH') {
+      console.log('🚨 Critical/High priority duplicate - notifying super users')
+      await notifySuperUsersForCriticalReport(supabaseClient, newReportId, existingReport.type, existingReport.priority, existingReport.severity)
+    }
+    
+    return true
+  } catch (error) {
+    console.error('Error in copyExistingClassification:', error)
+    return false
+  }
+}
+
+/**
+ * Notify super users about critical reports
+ */
+async function notifySuperUsersForCriticalReport(
+  supabaseClient: any,
+  reportId: string,
+  reportType: string,
+  priority: number,
+  severity: string
+): Promise<void> {
+  try {
+    const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    
+    if (!supabaseUrl || !supabaseServiceKey) {
+      console.warn('Supabase URL or Service Key not configured')
+      return
+    }
+
+    const response = await fetch(`${supabaseUrl}/functions/v1/notify-superusers-critical-report`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${supabaseServiceKey}`
+      },
+      body: JSON.stringify({
+        report_id: reportId,
+        report_type: reportType,
+        priority: priority,
+        severity: severity
+      })
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.warn('Failed to notify super users:', response.status, errorText)
+    } else {
+      console.log('✅ Super users notified about critical duplicate report')
+    }
+  } catch (error) {
+    console.warn('Failed to notify super users:', error)
   }
 }
 

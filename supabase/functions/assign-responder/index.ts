@@ -49,8 +49,8 @@ serve(async (req) => {
     // Check if responder exists and is available
     await validateResponderAvailability(supabaseClient, requestData.responder_id)
 
-    // Check if assignment already exists
-    await checkExistingAssignment(supabaseClient, requestData.report_id)
+    // Check if assignment already exists (and cancel if reassigning to different responder)
+    await checkExistingAssignment(supabaseClient, requestData.report_id, requestData.responder_id)
 
     // Execute assignment transaction
     const result = await executeAssignmentTransaction(supabaseClient, requestData)
@@ -66,6 +66,9 @@ serve(async (req) => {
 
     // Log audit event
     await logAssignmentAudit(supabaseClient, requestData, result)
+
+    // Send push notification to responder
+    await sendPushNotificationToResponder(supabaseClient, result)
 
     return new Response(
       JSON.stringify({
@@ -146,10 +149,8 @@ async function validateReportAssignment(
     throw new Error(`Failed to fetch report: ${error.message}`)
   }
 
-  if (report.assignment_id) {
-    throw new Error('Report is already assigned to a responder')
-  }
-
+  // Allow reassignment - validation will happen in checkExistingAssignment
+  // Only block if report is resolved or closed
   if (report.lifecycle_status === 'resolved' || report.lifecycle_status === 'closed') {
     throw new Error('Cannot assign responder to resolved or closed report')
   }
@@ -186,24 +187,42 @@ async function validateResponderAvailability(
 
 /**
  * Check if assignment already exists for this report
+ * If assigning to a different responder, cancel existing assignments
  */
 async function checkExistingAssignment(
   supabaseClient: any,
-  reportId: string
+  reportId: string,
+  newResponderId: string
 ): Promise<void> {
-  const { data: existingAssignment, error } = await supabaseClient
+  const { data: existingAssignments, error } = await supabaseClient
     .from('assignment')
-    .select('id, status')
+    .select('id, responder_id, status')
     .eq('report_id', reportId)
     .in('status', ['assigned', 'accepted', 'enroute', 'on_scene'])
-    .single()
 
   if (error && error.code !== 'PGRST116') {
     throw new Error(`Failed to check existing assignment: ${error.message}`)
   }
 
-  if (existingAssignment) {
-    throw new Error('Report already has an active assignment')
+  if (existingAssignments && existingAssignments.length > 0) {
+    // Check if any assignment is for the same responder (idempotent - just update status)
+    const sameResponderAssignment = existingAssignments.find(
+      (a: any) => a.responder_id === newResponderId
+    )
+    
+    if (sameResponderAssignment) {
+      console.log('Assignment already exists for this responder, will update status')
+      return // Allow to proceed - will be handled in transaction
+    }
+    
+    // Different responder - cancel all existing assignments
+    console.log(`Cancelling ${existingAssignments.length} existing assignment(s) to reassign to new responder`)
+    for (const assignment of existingAssignments) {
+      await supabaseClient
+        .from('assignment')
+        .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+        .eq('id', assignment.id)
+    }
   }
 }
 
@@ -326,7 +345,7 @@ async function emitAssignmentNotification(
         message: `You have been assigned to a ${report.type || 'emergency'} report`,
         data: notification,
         read: false,
-        created_at: assignedAt
+        created_at: new Date().toISOString()
       })
 
   } catch (error) {
@@ -483,5 +502,48 @@ async function logAssignmentAudit(
   } catch (error) {
     console.warn('Failed to log assignment audit:', error)
     // Don't throw error as audit logging is not critical
+  }
+}
+
+/**
+ * Send push notification to responder about new assignment
+ */
+async function sendPushNotificationToResponder(
+  supabaseClient: any,
+  result: AssignmentResult
+): Promise<void> {
+  try {
+    const SUPABASE_URL = Deno.env.get('SUPABASE_URL')
+    const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+
+    if (!SUPABASE_URL || !SERVICE_KEY) {
+      console.warn('Supabase URL or Service Key not configured')
+      return
+    }
+
+    // Call the notify-responder-assignment function
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/notify-responder-assignment`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${SERVICE_KEY}`
+      },
+      body: JSON.stringify({
+        assignment_id: result.assignment_id,
+        responder_id: result.responder_id,
+        report_id: result.report_id
+      })
+    })
+
+    if (response.ok) {
+      const notificationResult = await response.json()
+      console.log(`✅ Push notification sent to responder:`, notificationResult)
+    } else {
+      const errorText = await response.text()
+      console.warn('Failed to send push notification:', response.status, errorText)
+    }
+  } catch (error) {
+    console.warn('Failed to send push notification to responder:', error)
+    // Don't throw error as push notification is not critical for assignment
   }
 }

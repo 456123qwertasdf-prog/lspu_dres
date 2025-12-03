@@ -966,33 +966,65 @@
                 submitText.classList.add('hidden');
                 submitLoading.classList.remove('hidden');
 
-                // Get form data
-                const formData = {
-                    type: 'other', // Will be determined by AI
-                    message: document.getElementById('description').value || 'Emergency reported via photo',
-                    reporter_name: document.getElementById('reporterName').value,
-                    location: document.getElementById('location').value
-                };
-
-                // Upload image if provided
+                // Get photo file
                 const photoInput = document.getElementById('emergencyPhoto');
-                if (photoInput.files[0]) {
-                    formData.image_path = await emergencySystem.uploadImage(photoInput.files[0]);
-                } else {
+                if (!photoInput.files || !photoInput.files[0]) {
                     throw new Error('Please take a photo or upload an image');
                 }
 
-                // Submit report
-                const report = await emergencySystem.submitEmergencyReport(formData);
-                
+                // Get location data
+                const locationInput = document.getElementById('location').value;
+                if (!locationInput || !emergencySystem.location) {
+                    throw new Error('Please get your location before submitting');
+                }
+
+                // Get user info
+                const { data: sessionData } = await emergencySystem.supabase.auth.getSession();
+                const userId = sessionData?.session?.user?.id;
+
+                if (!userId) {
+                    throw new Error('You must be signed in to submit a report');
+                }
+
+                console.log('📝 Submitting report via Edge Function with deduplication...');
+
+                // Create FormData for multipart submission (like mobile app)
+                const formData = new FormData();
+                formData.append('image', photoInput.files[0]);
+                formData.append('user_id', userId);
+                formData.append('lat', emergencySystem.location.latitude.toString());
+                formData.append('lng', emergencySystem.location.longitude.toString());
+                formData.append('description', document.getElementById('description').value || 'Emergency reported via photo');
+                formData.append('timestamp', new Date().toISOString());
+
+                // Call submit-report Edge Function (handles deduplication + AI classification)
+                const response = await fetch(
+                    `${emergencySystem.supabase.supabaseUrl}/functions/v1/submit-report`,
+                    {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${emergencySystem.supabase.supabaseKey}`
+                        },
+                        body: formData
+                    }
+                );
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const result = await response.json();
+                console.log('✅ Report submitted successfully:', result);
+
                 // Reset form
                 document.getElementById('emergencyForm').reset();
                 document.getElementById('photoPreview').classList.add('hidden');
                 document.getElementById('locationStatus').textContent = '';
                 
-                // Report submitted successfully
-                
-                emergencySystem.showSuccess('Emergency report submitted successfully! Admin will review and assign responders...');
+                emergencySystem.showSuccess('Emergency report submitted successfully! ' + 
+                    (result.is_duplicate ? '(Image was already reported)' : '') + 
+                    ' Admin will review and assign responders...');
                 
             } catch (error) {
                 console.error('Submit failed:', error);
