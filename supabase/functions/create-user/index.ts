@@ -124,13 +124,13 @@ Deno.serve(async (req) => {
     try {
       // Generate email verification link (this also creates the invite email but we'll send our own with credentials)
       // Set redirect to login page after verification
-      const redirectUrl = `${SUPABASE_URL.replace('/rest/v1', '').replace('https://', 'http://127.0.0.1:8000') || 'http://127.0.0.1:8000/login.html'}`
+      const redirectUrl = 'https://dres-lspu-edu-ph.456123qwert-asdf.workers.dev/login.html'
       const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
         type: 'signup',
         email: email,
         password: generatedPassword,
         options: {
-          redirectTo: 'http://127.0.0.1:8000/login.html', // Redirect to login page after verification
+          redirectTo: redirectUrl, // Redirect to login page after verification
           data: {
             full_name: displayName || (email.split('@')[0] || 'User'),
             role,
