@@ -27,26 +27,33 @@
 ---
 
 ### 2. **Responder Assignment Notifications**
-**Status:** ✅ **FIXED & DEPLOYED**
+**Status:** ✅ **FIXED & DEPLOYED (Web + Mobile)**
 
 **Problem:** 
 - Responders weren't receiving push notifications when assigned to reports
 - The `notify-responder-assignment` function was querying the wrong database table
 - It was looking for `onesignal_player_id` in a `users` table
 - But OneSignal IDs are actually in the `onesignal_subscriptions` table
+- **Mobile app was directly manipulating database, bypassing notifications**
 
 **Solution:**
 - ✅ Fixed database query to use `onesignal_subscriptions` table
 - ✅ Updated to support multiple devices per responder
 - ✅ Redeployed `notify-responder-assignment` function
 - ✅ Redeployed `assign-responder` function
+- ✅ **Updated mobile app to call `assign-responder` Edge Function**
+- ✅ **Mobile super users can now send notifications to responders**
 
 **When it triggers:**
-- When a super user assigns a responder to a report (via web or mobile dashboard)
+- When a super user assigns a responder to a report (via **web OR mobile** dashboard)
 
 **Notification Types:**
 - 🔴 **CRITICAL/HIGH** (priority ≤ 2): Red notification, emergency sound
 - 🟠 **NORMAL** (priority 3-4): Orange notification, default sound
+
+**Interfaces:**
+- ✅ Web Dashboard → Calls Edge Function → Notifications sent
+- ✅ Mobile App → Calls Edge Function → Notifications sent
 
 ---
 
@@ -99,11 +106,21 @@ WHERE u.deleted_at IS NULL;
 This shows which responders have devices registered.
 
 #### Step 2: Test by assigning a responder
-1. Go to Super User Dashboard (web or mobile)
+
+**Option A: Web Dashboard**
+1. Go to Super User Dashboard (web)
 2. Find any unassigned report
 3. Click "Assign Responder"
 4. Select a responder who has an `onesignal_player_id`
 5. Save/Confirm
+
+**Option B: Mobile App** ✅ **NOW WORKING!**
+1. Open mobile app as super user
+2. Go to **Reports** tab
+3. Select any unassigned report
+4. Tap **Edit** button (top right)
+5. Select a responder from the dropdown
+6. Tap **Save Changes**
 
 #### Step 3: Check what happens
 **Responder should receive:**
@@ -223,12 +240,22 @@ const playerIds = subscriptions.map(sub => sub.player_id)
 ## ✅ Next Steps
 
 1. **Test super user notifications** by creating a new critical report
-2. **Test responder notifications** by assigning a responder to a report
+2. **Test responder notifications** by assigning a responder to a report (from web OR mobile)
 3. **Ensure all responders log into mobile app** to register for notifications
 4. **Ensure `admin@demo.com` logs into mobile app** to receive notifications
+5. **Build and deploy updated mobile app** with notification fix
+
+---
+
+## 📚 Related Documentation
+
+- [MOBILE_APP_NOTIFICATION_FIX.md](./MOBILE_APP_NOTIFICATION_FIX.md) - **NEW!** Mobile app notification fix details
+- [RESPONDER_ASSIGNMENT_FIX.md](./RESPONDER_ASSIGNMENT_FIX.md) - Web interface notification fix
+- [NOTIFICATION_SYNC_SYSTEM.md](./NOTIFICATION_SYNC_SYSTEM.md) - Notification sync system
 
 ---
 
 **Last Updated:** December 4, 2025  
-**Status:** ✅ All systems operational and deployed!
+**Status:** ✅ All systems operational and deployed!  
+**Latest Fix:** ✅ Mobile app now sends notifications when assigning responders!
 

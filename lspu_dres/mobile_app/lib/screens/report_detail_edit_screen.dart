@@ -115,7 +115,7 @@ class _ReportDetailEditScreenState extends State<ReportDetailEditScreen> {
         throw Exception('Report ID is missing');
       }
 
-      // Update report
+      // Update report basic info
       final updateData = {
         'type': _selectedType,
         'status': _selectedStatus,
@@ -129,93 +129,47 @@ class _ReportDetailEditScreenState extends State<ReportDetailEditScreen> {
           .update(updateData)
           .eq('id', reportId);
 
-      // Handle responder assignment
-      if (_selectedResponderId != null && _selectedResponderId!.isNotEmpty) {
-        // Cancel existing assignments for this report
-        final existingAssignments = await SupabaseService.client
-            .from('assignment')
-            .select('*')
-            .eq('report_id', reportId)
-            .or('status.eq.assigned,status.eq.accepted,status.eq.enroute,status.eq.on_scene');
+      // Handle responder assignment using Edge Function
+      final previousResponderId = widget.report['responder_id']?.toString();
+      final hasNewAssignment = _selectedResponderId != null && 
+                                _selectedResponderId!.isNotEmpty;
+      final hasChangedAssignment = previousResponderId != _selectedResponderId;
 
-        if (existingAssignments != null) {
-          for (final assignment in existingAssignments) {
-            if (assignment['responder_id']?.toString() != _selectedResponderId) {
-              await SupabaseService.client
-                  .from('assignment')
-                  .update({'status': 'cancelled'})
-                  .eq('id', assignment['id']);
-            }
+      if (hasNewAssignment && hasChangedAssignment) {
+        // Call the assign-responder Edge Function
+        // This will handle notifications automatically
+        debugPrint('🚀 Calling assign-responder Edge Function for report $reportId');
+        
+        try {
+          // Get current user ID
+          final currentUser = SupabaseService.client.auth.currentUser;
+          if (currentUser == null) {
+            throw Exception('User not authenticated');
           }
+
+          final response = await SupabaseService.client.functions.invoke(
+            'assign-responder',
+            body: {
+              'report_id': reportId,
+              'responder_id': _selectedResponderId!,
+              'assigned_by': currentUser.id,
+            },
+          );
+
+          debugPrint('✅ Assignment successful: ${response.data}');
+        } catch (e) {
+          debugPrint('❌ Error calling assign-responder: $e');
+          throw Exception('Failed to assign responder: $e');
         }
-
-        // Check if assignment already exists for this responder
-        final existingAssignment = await SupabaseService.client
-            .from('assignment')
-            .select('*')
-            .eq('report_id', reportId)
-            .eq('responder_id', _selectedResponderId!)
-            .limit(1)
-            .maybeSingle();
-
-        if (existingAssignment != null) {
-          // Update existing assignment
-          final assignmentId = existingAssignment['id']?.toString();
-          if (assignmentId != null) {
-            await SupabaseService.client
-                .from('assignment')
-                .update({
-                  'status': 'assigned',
-                  'updated_at': DateTime.now().toIso8601String(),
-                  'assigned_at': DateTime.now().toIso8601String(),
-                })
-                .eq('id', assignmentId);
-
-          // Update report with assignment info
-          await SupabaseService.client
-              .from('reports')
-              .update({
-                'responder_id': _selectedResponderId,
-                'assignment_id': assignmentId,
-                'lifecycle_status': 'assigned',
-              })
-              .eq('id', reportId);
-        }
-        } else {
-          // Create new assignment
-          final newAssignment = await SupabaseService.client
-              .from('assignment')
-              .insert({
-                'report_id': reportId,
-                'responder_id': _selectedResponderId!,
-                'status': 'assigned',
-                'assigned_at': DateTime.now().toIso8601String(),
-              })
-              .select()
-              .single();
-
-          // Update report with assignment info
-          final newAssignmentId = newAssignment['id']?.toString();
-          if (newAssignmentId != null) {
-            await SupabaseService.client
-                .from('reports')
-                .update({
-                  'responder_id': _selectedResponderId,
-                  'assignment_id': newAssignmentId,
-                  'lifecycle_status': 'assigned',
-                })
-                .eq('id', reportId);
-          }
-        }
-      } else if (widget.report['responder_id'] != null) {
-        // Unassign responder
+      } else if (!hasNewAssignment && previousResponderId != null) {
+        // Unassign responder - cancel active assignments
         final assignments = await SupabaseService.client
             .from('assignment')
             .select('*')
             .eq('report_id', reportId)
             .or('status.eq.assigned,status.eq.accepted,status.eq.enroute,status.eq.on_scene');
 
-        if (assignments != null) {
+        if (assignments != null && assignments.isNotEmpty) {
           for (final assignment in assignments) {
             await SupabaseService.client
                 .from('assignment')
