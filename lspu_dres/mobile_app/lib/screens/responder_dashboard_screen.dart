@@ -7,10 +7,12 @@ import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart' as latlong;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../models/responder_models.dart';
 import '../services/supabase_service.dart';
+import '../services/onesignal_service.dart';
 
 class ResponderDashboardScreen extends StatefulWidget {
   const ResponderDashboardScreen({super.key});
@@ -45,6 +47,11 @@ class _ResponderDashboardScreenState extends State<ResponderDashboardScreen> {
   double? _routeDistanceKm;
   double? _routeDurationMin;
 
+  // Realtime subscriptions
+  RealtimeChannel? _notificationsChannel;
+  RealtimeChannel? _reportsChannel;
+  RealtimeChannel? _assignmentsChannel;
+
   @override
   void initState() {
     super.initState();
@@ -54,7 +61,117 @@ class _ResponderDashboardScreenState extends State<ResponderDashboardScreen> {
   @override
   void dispose() {
     _mapController.dispose();
+    _notificationsChannel?.unsubscribe();
+    _reportsChannel?.unsubscribe();
+    _assignmentsChannel?.unsubscribe();
     super.dispose();
+  }
+
+  void _setupRealtimeSubscriptions() {
+    if (_profile == null) return;
+
+    // Subscribe to notifications table for this responder
+    _notificationsChannel = SupabaseService.client
+        .channel('responder-notifications-mobile')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'notifications',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'target_type',
+            value: 'responder',
+          ),
+          callback: (payload) {
+            final notification = payload.newRecord;
+            if (notification['target_id'] == _profile?.id) {
+              debugPrint('🔔 New notification received: $notification');
+              _showNotificationSnackbar(notification);
+              _syncNotifications();
+            }
+          },
+        )
+        .subscribe();
+
+    // Subscribe to reports table
+    _reportsChannel = SupabaseService.client
+        .channel('responder-reports-mobile')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'reports',
+          callback: (payload) {
+            debugPrint('📢 Report updated: ${payload.newRecord}');
+            _loadPage(showLoader: false);
+          },
+        )
+        .subscribe();
+
+    // Subscribe to assignments table
+    _assignmentsChannel = SupabaseService.client
+        .channel('responder-assignments-mobile')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'assignment',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'responder_id',
+            value: _profile!.id,
+          ),
+          callback: (payload) {
+            debugPrint('📋 Assignment updated: ${payload.newRecord}');
+            _loadPage(showLoader: false);
+          },
+        )
+        .subscribe();
+
+    debugPrint('✅ Realtime subscriptions setup complete for responder ${_profile?.id}');
+  }
+
+  Future<void> _syncNotifications() async {
+    try {
+      final response = await SupabaseService.client.functions.invoke(
+        'sync-notifications',
+        body: {
+          'limit': 20,
+          'unreadOnly': false,
+        },
+      );
+
+      debugPrint('✅ Synced notifications: ${response.data}');
+    } catch (e) {
+      debugPrint('❌ Failed to sync notifications: $e');
+    }
+  }
+
+  void _showNotificationSnackbar(Map<String, dynamic> notification) {
+    if (!mounted) return;
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              notification['title'] ?? 'New Notification',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            if (notification['message'] != null)
+              Text(notification['message']),
+          ],
+        ),
+        backgroundColor: Colors.green.shade700,
+        duration: const Duration(seconds: 4),
+        behavior: SnackBarBehavior.floating,
+        action: SnackBarAction(
+          label: 'Dismiss',
+          textColor: Colors.white,
+          onPressed: () {},
+        ),
+      ),
+    );
   }
 
   Future<void> _loadPage({bool showLoader = true}) async {
@@ -126,6 +243,9 @@ class _ResponderDashboardScreenState extends State<ResponderDashboardScreen> {
         _isLoading = false;
         _isRefreshing = false;
       });
+
+      // Setup realtime subscriptions after profile is loaded
+      _setupRealtimeSubscriptions();
 
       // Prefer live device GPS; if we don't have it yet, try to capture once here.
       if (_deviceLocation != null) {
@@ -929,9 +1049,63 @@ class _ResponderDashboardScreenState extends State<ResponderDashboardScreen> {
               ),
             ],
           ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _syncOneSignalPlayerId,
+              icon: const Icon(Icons.notifications_active, size: 20),
+              label: const Text('Sync Notifications (OneSignal)'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF10b981),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
+  }
+
+  Future<void> _syncOneSignalPlayerId() async {
+    // Show loading dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: CircularProgressIndicator(),
+      ),
+    );
+
+    try {
+      final userId = SupabaseService.currentUserId;
+      
+      if (userId == null) {
+        Navigator.pop(context); // Close loading
+        if (mounted) {
+          _showSnack('❌ Not logged in. Please login first.', isError: true);
+        }
+        return;
+      }
+
+      debugPrint('🔄 Manual sync: Saving OneSignal Player ID...');
+      await OneSignalService().retrySavePlayerIdToSupabase();
+      
+      if (mounted) {
+        Navigator.pop(context); // Close loading
+        _showSnack('✅ Notifications synced successfully!');
+      }
+    } catch (e) {
+      debugPrint('❌ Error syncing OneSignal Player ID: $e');
+      if (mounted) {
+        Navigator.pop(context); // Close loading
+        _showSnack('❌ Sync failed: $e', isError: true);
+      }
+    }
   }
 
   Widget _buildAssignmentsSection() {

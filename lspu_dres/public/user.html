@@ -10,6 +10,29 @@
     <!-- Bootstrap Icons -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css" rel="stylesheet">
     <style>
+        /* Notification Toast Animations */
+        @keyframes slideIn {
+            from {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        @keyframes slideOut {
+            from {
+                transform: translateX(0);
+                opacity: 1;
+            }
+            to {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+        }
+
         .announcement-card {
             border-left: 4px solid;
             border-radius: 8px;
@@ -1510,6 +1533,25 @@
                         }
                     });
 
+                // Also subscribe to notifications table for direct notifications
+                const notificationsChannel = emergencySystem.supabase
+                    .channel('user-notifications')
+                    .on('postgres_changes', {
+                        event: 'INSERT',
+                        schema: 'public',
+                        table: 'notifications',
+                        filter: `target_type=eq.reporter`
+                    }, (payload) => {
+                        console.log('🔔 New notification received:', payload.new);
+                        if (payload.new) {
+                            showNotificationToast(payload.new);
+                            syncNotifications();
+                        }
+                    })
+                    .subscribe((status) => {
+                        console.log('📡 Notifications subscription status:', status);
+                    });
+
                 console.log('✅ Announcements subscription set up successfully');
             } catch (error) {
                 console.error('❌ Failed to setup announcements subscription:', error);
@@ -1526,6 +1568,67 @@
                     console.log('⚠️ Real-time subscription failed after multiple attempts. Manual refresh will work.');
                 }
             }
+        }
+
+        // Sync notifications for current user
+        async function syncNotifications() {
+            try {
+                const { data, error } = await emergencySystem.supabase.functions.invoke(
+                    'sync-notifications',
+                    {
+                        body: { 
+                            limit: 20, 
+                            unreadOnly: false 
+                        }
+                    }
+                );
+
+                if (error) throw error;
+                
+                console.log('✅ Synced notifications:', data);
+                return data;
+            } catch (error) {
+                console.error('❌ Failed to sync notifications:', error);
+                return null;
+            }
+        }
+
+        // Show notification toast
+        function showNotificationToast(notification) {
+            const toast = document.createElement('div');
+            toast.style.cssText = `
+                position: fixed;
+                top: 80px;
+                right: 20px;
+                background: white;
+                border-left: 4px solid #17a2b8;
+                padding: 15px 20px;
+                border-radius: 8px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                max-width: 400px;
+                z-index: 10000;
+                animation: slideIn 0.3s ease-out;
+            `;
+            
+            toast.innerHTML = `
+                <div style="display: flex; align-items: start; gap: 10px;">
+                    <div style="font-size: 24px;">🔔</div>
+                    <div style="flex: 1;">
+                        <div style="font-weight: 600; margin-bottom: 5px;">${notification.title || 'New Notification'}</div>
+                        <div style="font-size: 14px; color: #666;">${notification.message || ''}</div>
+                    </div>
+                    <button onclick="this.parentElement.parentElement.remove()" style="border: none; background: none; cursor: pointer; font-size: 20px; color: #999;">&times;</button>
+                </div>
+            `;
+            
+            document.body.appendChild(toast);
+            
+            setTimeout(() => {
+                if (toast.parentElement) {
+                    toast.style.animation = 'slideOut 0.3s ease-out';
+                    setTimeout(() => toast.remove(), 300);
+                }
+            }, 5000);
         }
 
 

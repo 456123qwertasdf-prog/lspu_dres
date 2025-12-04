@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/supabase_service.dart';
+import '../services/onesignal_service.dart';
 import 'super_user_reports_screen.dart';
 import 'super_user_announcements_screen.dart';
 
@@ -29,6 +31,10 @@ class _SuperUserDashboardScreenState extends State<SuperUserDashboardScreen> {
   // User info
   String _userEmail = 'Super User';
   
+  // Realtime subscriptions
+  RealtimeChannel? _notificationsChannel;
+  RealtimeChannel? _announcementsChannel;
+  
   // Use centralized Supabase service
   String get _supabaseUrl => SupabaseService.supabaseUrl;
   String get _supabaseKey => SupabaseService.supabaseAnonKey;
@@ -39,6 +45,97 @@ class _SuperUserDashboardScreenState extends State<SuperUserDashboardScreen> {
     _loadUserInfo();
     _loadStats();
     _loadActiveAlerts();
+    _setupRealtimeSubscriptions();
+  }
+
+  @override
+  void dispose() {
+    _notificationsChannel?.unsubscribe();
+    _announcementsChannel?.unsubscribe();
+    super.dispose();
+  }
+
+  void _setupRealtimeSubscriptions() {
+    // Subscribe to notifications table for super user
+    _notificationsChannel = SupabaseService.client
+        .channel('super-user-notifications-mobile')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'notifications',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'target_type',
+            value: 'admin',
+          ),
+          callback: (payload) {
+            debugPrint('🔔 New notification received: ${payload.newRecord}');
+            _showNotificationSnackbar(payload.newRecord);
+            _syncNotifications();
+          },
+        )
+        .subscribe();
+
+    // Subscribe to announcements table
+    _announcementsChannel = SupabaseService.client
+        .channel('super-user-announcements-mobile')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'announcements',
+          callback: (payload) {
+            debugPrint('📢 Announcement updated: ${payload.newRecord}');
+            _loadActiveAlerts();
+          },
+        )
+        .subscribe();
+
+    debugPrint('✅ Realtime subscriptions setup complete');
+  }
+
+  Future<void> _syncNotifications() async {
+    try {
+      final response = await SupabaseService.client.functions.invoke(
+        'sync-notifications',
+        body: {
+          'limit': 20,
+          'unreadOnly': false,
+        },
+      );
+
+      debugPrint('✅ Synced notifications: ${response.data}');
+    } catch (e) {
+      debugPrint('❌ Failed to sync notifications: $e');
+    }
+  }
+
+  void _showNotificationSnackbar(Map<String, dynamic> notification) {
+    if (!mounted) return;
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              notification['title'] ?? 'New Notification',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            if (notification['message'] != null)
+              Text(notification['message']),
+          ],
+        ),
+        backgroundColor: Colors.blue.shade700,
+        duration: const Duration(seconds: 4),
+        behavior: SnackBarBehavior.floating,
+        action: SnackBarAction(
+          label: 'Dismiss',
+          textColor: Colors.white,
+          onPressed: () {},
+        ),
+      ),
+    );
   }
 
   Future<void> _loadUserInfo() async {
@@ -325,6 +422,59 @@ class _SuperUserDashboardScreenState extends State<SuperUserDashboardScreen> {
       }
     } catch (e) {
       return 'Unknown';
+    }
+  }
+
+  Future<void> _syncOneSignalPlayerId() async {
+    // Show loading dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: CircularProgressIndicator(),
+      ),
+    );
+
+    try {
+      final userId = SupabaseService.currentUserId;
+      
+      if (userId == null) {
+        Navigator.pop(context); // Close loading
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('❌ Not logged in. Please login first.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      debugPrint('🔄 Manual sync: Saving OneSignal Player ID...');
+      await OneSignalService().retrySavePlayerIdToSupabase();
+      
+      if (mounted) {
+        Navigator.pop(context); // Close loading
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ Notifications synced successfully!'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('❌ Error syncing OneSignal Player ID: $e');
+      if (mounted) {
+        Navigator.pop(context); // Close loading
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Sync failed: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -1013,6 +1163,12 @@ class _SuperUserDashboardScreenState extends State<SuperUserDashboardScreen> {
             icon: Icons.refresh,
             title: 'Refresh Stats',
             onTap: _loadStats,
+          ),
+          _buildMenuItem(
+            icon: Icons.notifications_active,
+            title: 'Sync Notifications (OneSignal)',
+            color: const Color(0xFF10b981),
+            onTap: _syncOneSignalPlayerId,
           ),
           _buildMenuItem(
             icon: Icons.settings,

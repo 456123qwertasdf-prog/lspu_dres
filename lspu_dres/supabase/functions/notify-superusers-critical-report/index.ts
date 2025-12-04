@@ -306,11 +306,12 @@ async function createDatabaseNotifications(
 ): Promise<void> {
   try {
     const notifications = users.map(user => ({
-      user_id: user.id,
+      target_type: 'admin',
+      target_id: user.id,
       type: 'critical_report',
       title: '🚨 New Critical Report',
       message: `${report.type?.toUpperCase() || 'EMERGENCY'} report requires immediate assignment • Response time: ${report.response_time}`,
-      data: {
+      payload: {
         report_id: report.id,
         report_type: report.type,
         priority: report.priority,
@@ -319,7 +320,7 @@ async function createDatabaseNotifications(
         location: report.location,
         response_time: report.response_time
       },
-      read: false,
+      is_read: false,
       created_at: new Date().toISOString()
     }))
 

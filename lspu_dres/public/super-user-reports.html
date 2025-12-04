@@ -949,89 +949,40 @@
                     throw updateError;
                 }
 
-                // Handle responder assignment
+                // Handle responder assignment using Edge Function
                 if (selectedResponderId) {
-                    // First, cancel any existing active assignments for this report
-                    const { data: existingAssignments, error: checkError } = await window.emergencySystem.supabase
-                        .from('assignment')
-                        .select('*')
-                        .eq('report_id', currentReportId)
-                        .in('status', ['assigned', 'accepted', 'enroute', 'on_scene']);
+                    try {
+                        // Get current user for assigned_by field
+                        const { data: sessionData } = await window.emergencySystem.supabase.auth.getSession();
+                        const userId = sessionData?.session?.user?.id;
 
-                    if (!checkError && existingAssignments && existingAssignments.length > 0) {
-                        // Cancel existing assignments
-                        for (const assignment of existingAssignments) {
-                            if (assignment.responder_id !== selectedResponderId) {
-                                await window.emergencySystem.supabase
-                                    .from('assignment')
-                                    .update({ status: 'cancelled' })
-                                    .eq('id', assignment.id);
-                            }
+                        if (!userId) {
+                            throw new Error('User not authenticated');
                         }
-                    }
 
-                    // Check if assignment already exists for this responder
-                    const { data: existingAssignment, error: findError } = await window.emergencySystem.supabase
-                        .from('assignment')
-                        .select('*')
-                        .eq('report_id', currentReportId)
-                        .eq('responder_id', selectedResponderId)
-                        .limit(1);
+                        console.log(`🚀 Calling assign-responder Edge Function for report ${currentReportId}`);
 
-                    if (!findError) {
-                        if (existingAssignment && existingAssignment.length > 0) {
-                            // Update existing assignment
-                            const { data: updatedAssignment, error: assignError } = await window.emergencySystem.supabase
-                                .from('assignment')
-                                .update({
-                                    status: 'assigned',
-                                    updated_at: new Date().toISOString(),
-                                    assigned_at: new Date().toISOString()
-                                })
-                                .eq('id', existingAssignment[0].id)
-                                .select()
-                                .single();
-
-                            if (assignError) {
-                                console.warn('Failed to update assignment:', assignError);
-                            } else if (updatedAssignment) {
-                                // Update report with assignment info
-                                await window.emergencySystem.supabase
-                                    .from('reports')
-                                    .update({
-                                        responder_id: selectedResponderId,
-                                        assignment_id: updatedAssignment.id,
-                                        lifecycle_status: 'assigned'
-                                    })
-                                    .eq('id', currentReportId);
+                        // Call the assign-responder Edge Function
+                        // This handles everything: assignment creation, notification sending, real-time updates
+                        const { data: assignResult, error: assignError } = await window.emergencySystem.supabase.functions.invoke('assign-responder', {
+                            body: {
+                                report_id: currentReportId,
+                                responder_id: selectedResponderId,
+                                assigned_by: userId
                             }
+                        });
+
+                        if (assignError) {
+                            console.error('❌ Failed to assign responder via Edge Function:', assignError);
+                            window.emergencySystem.showError('Failed to assign responder: ' + assignError.message);
+                            return; // Exit early on error
                         } else {
-                            // Create new assignment
-                            const { data: newAssignment, error: assignError } = await window.emergencySystem.supabase
-                                .from('assignment')
-                                .insert({
-                                    report_id: currentReportId,
-                                    responder_id: selectedResponderId,
-                                    status: 'assigned',
-                                    assigned_at: new Date().toISOString()
-                                })
-                                .select()
-                                .single();
-
-                            if (assignError) {
-                                console.warn('Failed to create assignment:', assignError);
-                            } else if (newAssignment) {
-                                // Update report with assignment info
-                                await window.emergencySystem.supabase
-                                    .from('reports')
-                                    .update({
-                                        responder_id: selectedResponderId,
-                                        assignment_id: newAssignment.id,
-                                        lifecycle_status: 'assigned'
-                                    })
-                                    .eq('id', currentReportId);
-                            }
+                            console.log('✅ Responder assigned successfully with push notification:', assignResult);
                         }
+                    } catch (error) {
+                        console.error('❌ Error calling assign-responder Edge Function:', error);
+                        window.emergencySystem.showError('Failed to assign responder: ' + error.message);
+                        return; // Exit early on error
                     }
                 } else if (currentReportData.responder_id) {
                     // If responder was removed, cancel all active assignments

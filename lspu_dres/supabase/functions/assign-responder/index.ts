@@ -323,12 +323,13 @@ async function emitAssignmentNotification(
     await supabaseClient
       .from('notifications')
       .insert({
-        user_id: responder.user_id,
+        target_type: 'responder',
+        target_id: responder.user_id,
         type: 'assignment_created',
         title: 'New Assignment',
         message: `You have been assigned to a ${report.type || 'emergency'} report`,
-        data: notification,
-        read: false,
+        payload: notification,
+        is_read: false,
         created_at: assignedAt
       })
 

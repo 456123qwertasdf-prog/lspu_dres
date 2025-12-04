@@ -86,24 +86,26 @@ serve(async (req) => {
       throw new Error('Responder not found')
     }
 
-    // Get responder's OneSignal player ID from users table
-    const { data: userData, error: userError } = await supabaseClient
-      .from('users')
-      .select('onesignal_player_id')
-      .eq('id', responder.user_id)
-      .single()
+    // Get responder's OneSignal player IDs from onesignal_subscriptions table
+    const { data: subscriptions, error: subscriptionError } = await supabaseClient
+      .from('onesignal_subscriptions')
+      .select('player_id')
+      .eq('user_id', responder.user_id)
 
-    if (userError || !userData?.onesignal_player_id) {
+    if (subscriptionError || !subscriptions || subscriptions.length === 0) {
       console.warn(`No OneSignal player ID found for responder ${responder.name}`)
       return new Response(
         JSON.stringify({ 
           success: true, 
           sent: 0, 
-          message: 'Responder has no OneSignal player ID' 
+          message: 'Responder has no OneSignal player ID registered' 
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
       )
     }
+
+    // Get all player IDs for the responder (they may have multiple devices)
+    const playerIds = subscriptions.map(sub => sub.player_id).filter(id => id !== null && id !== '')
 
     // Determine if this is a critical/high priority assignment
     const isCritical = report.priority <= 2 || report.severity === 'CRITICAL' || report.severity === 'HIGH'
@@ -113,9 +115,11 @@ serve(async (req) => {
     // Create notification payload
     const notificationPayload = createNotificationPayload(report, responder, isCritical, emoji, assignment_id)
 
-    // Send OneSignal push notification
+    // Send OneSignal push notification to all responder devices
+    console.log(`Sending notification to ${playerIds.length} device(s) for responder ${responder.name}`)
+    
     const result = await sendOneSignalNotification(
-      [userData.onesignal_player_id],
+      playerIds,
       notificationPayload,
       priorityLevel,
       isCritical
@@ -125,11 +129,12 @@ serve(async (req) => {
     await supabaseClient
       .from('notifications')
       .insert({
-        user_id: responder.user_id,
+        target_type: 'responder',
+        target_id: responder.user_id,
         type: 'assignment_created',
         title: notificationPayload.title,
         message: notificationPayload.message,
-        data: {
+        payload: {
           assignment_id,
           report_id,
           report_type: report.type,
@@ -137,7 +142,7 @@ serve(async (req) => {
           severity: report.severity,
           is_critical: isCritical
         },
-        read: false,
+        is_read: false,
         created_at: new Date().toISOString()
       })
 
